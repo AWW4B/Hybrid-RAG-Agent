@@ -17,7 +17,6 @@ export default defineConfig({
         target: 'ws://backend:8000',
         ws: true,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ws/, ''),
       },
       '/auth': {
         target: 'http://backend:8000',
