@@ -17,6 +17,7 @@ import time
 import asyncio
 from typing import Optional, AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
+from llama_cpp import Llama
 
 from app.core.config import MAX_TURNS, MAX_TOKENS
 from app.memory.context import (
@@ -84,24 +85,33 @@ async def transcribe_audio(audio_bytes: bytes, session_id: str) -> str:
 # MODEL_PATH / generation parameters in config.py.
 # =============================================================================
 
-# TODO Uwaid: Load your chosen LLM here (keep llama-cpp or swap to another).
-#   Current placeholder — set MODEL_PATH env var to your .gguf file path.
-#   from llama_cpp import Llama
-#   _llm = Llama(model_path=..., n_ctx=N_CTX, n_threads=N_THREADS, ...)
-_llm = None  # TODO Uwaid: replace with real model instance
+# Load the LLM using llama-cpp-python (imported from A2)
+import os
+from app.core.config import N_CTX, N_THREADS, N_BATCH
+
+# Read MODEL_PATH from env (set in docker-compose.yml to qwen2.5-3b-instruct-q4_k_m.gguf)
+_model_path = os.getenv("MODEL_PATH", "/models/qwen2.5-3b-instruct-q4_k_m.gguf")
+
+logger.info(f"[engine] Loading LLM model from: {_model_path}")
+try:
+    _llm = Llama(
+        model_path=_model_path,
+        n_ctx=N_CTX,
+        n_threads=N_THREADS,
+        n_batch=N_BATCH,
+        n_gpu_layers=0,  # CPU-only for this assignment
+        verbose=False,
+    )
+    logger.info("✅ [engine] LLM model loaded successfully.")
+except Exception as e:
+    logger.error(f"❌ [engine] LLM load failed: {e}")
+    _llm = None
 
 
 async def _generate_text(session_id: str, user_text: str) -> str:
     """
     Internal: runs the LLM and returns the clean assistant reply (STATE stripped).
     Delegates to the thread pool so the async loop stays free during inference.
-
-    Args:
-        session_id: Active session.
-        user_text : Transcribed user input from STT stage.
-
-    Returns:
-        Clean assistant text reply (STATE tag removed, ready for TTS).
     """
     if _llm is None:
         raise RuntimeError("LLM not loaded. Uwaid: assign a model instance to _llm.")
@@ -113,8 +123,6 @@ async def _generate_text(session_id: str, user_text: str) -> str:
 
     loop = asyncio.get_event_loop()
 
-    # TODO Uwaid: If you switch from llama-cpp, update the call below to match
-    #             your model's inference API. Keep it inside run_in_executor.
     raw_response = await loop.run_in_executor(
         _executor,
         lambda: "".join(
@@ -292,6 +300,81 @@ class VoiceEngine:
             "status":     session["status"],
             "turns_used": session["turns"],
             "turns_max":  MAX_TURNS,
+        }
+
+    async def stream(self, session_id: str, user_message: str) -> AsyncGenerator[dict, None]:
+        """
+        Text-in / streaming-token-out wrapper. Used by WebSocket text fallback.
+        Yields tokens live from the LLM via thread-pool executor.
+        """
+        guard_text = self._check_lifecycle_guards(session_id)
+        if guard_text:
+            yield {"token": guard_text, "done": True}
+            return
+
+        if _llm is None:
+            yield {"token": "LLM not loaded.", "done": True, "error": "LLM initialization failed."}
+            return
+
+        start = time.perf_counter()
+        
+        from app.core.config import build_chatml_prompt, TEMPERATURE, TOP_P, REPEAT_PENALTY
+        messages = build_inference_payload(session_id, user_message)
+        prompt   = build_chatml_prompt(messages)
+        
+        loop = asyncio.get_event_loop()
+        
+        # Execute the streaming iterator in the thread pool, yielding chunks
+        # back to the async loop so we don't block other requests.
+        try:
+            token_generator = await loop.run_in_executor(
+                _executor,
+                lambda: tuple(_llm(
+                    prompt,
+                    max_tokens=MAX_TOKENS,
+                    stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
+                    echo=False,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    repeat_penalty=REPEAT_PENALTY,
+                    stream=True,
+                ))
+            )
+            
+            full_text = ""
+            for chunk in token_generator:
+                token = chunk["choices"][0]["text"]
+                full_text += token
+                yield {"token": token, "done": False}
+                await asyncio.sleep(0)  # yield to event loop
+
+        except Exception as e:
+            logger.error(f"[engine] Stream error: {e}")
+            yield {"token": "", "done": True, "error": str(e)}
+            return
+            
+        latency_ms = (time.perf_counter() - start) * 1000
+        clean_response = extract_and_strip_state(session_id, full_text)
+        
+        # Strip trailing newlines just in case
+        clean_response = clean_response.strip()
+
+        add_message_to_chat(session_id, "user", user_message)
+        add_message_to_chat(session_id, "assistant", clean_response)
+        increment_turn(session_id)
+
+        if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
+            set_session_status(session_id, "closing")
+
+        session = get_or_create_session(session_id)
+        yield {
+            "token": "",
+            "done": True,
+            "latency_ms": round(latency_ms, 2),
+            "session_id": session_id,
+            "status": session["status"],
+            "turns_used": session["turns"],
+            "turns_max": MAX_TURNS,
         }
 
 
