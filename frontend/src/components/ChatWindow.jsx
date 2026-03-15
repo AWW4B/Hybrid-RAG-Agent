@@ -11,7 +11,7 @@ import QuickActions from './QuickActions.jsx'
 import InputBar from './InputBar.jsx'
 import SessionSidebar from './SessionSidebar.jsx'
 
-export default function ChatWindow({ chat, onMinimize, onClose, onLogout, backendStatus }) {
+export default function ChatWindow({ chat, onMinimize, onClose, backendStatus }) {
   const {
     messages, isLoading, micState, isPlaying, status,
     turnsUsed, turnsMax, voiceError,
@@ -51,7 +51,6 @@ export default function ChatWindow({ chat, onMinimize, onClose, onLogout, backen
         onMinimize={onMinimize}
         onClose={onClose}
         onToggleHistory={() => setSidebarOpen(v => !v)}
-        onLogout={onLogout}
         turnsUsed={turnsUsed}
         turnsMax={turnsMax}
         status={status}

@@ -4,7 +4,7 @@
 // =============================================================================
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ShoppingBag, Maximize2, Minimize2 } from 'lucide-react'
+import { ShoppingBag, Maximize2, Minimize2, LogOut } from 'lucide-react'
 import useAuth from './hooks/useAuth.js'
 import LoginPage from './components/LoginPage.jsx'
 import ChatWidget from './components/ChatWidget.jsx'
@@ -41,16 +41,27 @@ export default function App() {
   if (mode === 'fullpage') {
     return (
       <div className="relative">
-        <FullPageChat onLogout={logout} backendStatus={backendStatus} />
-        <motion.button
-          id="switch-widget-btn"
-          whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-          onClick={() => setMode('widget')}
-          className="fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-full
-                     bg-white shadow-md text-sm text-gray-600 hover:text-[#F57224] border border-gray-200"
-        >
-          <Minimize2 size={14} /> Switch to Widget
-        </motion.button>
+        <FullPageChat backendStatus={backendStatus} />
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+          <motion.button
+            id="switch-widget-btn"
+            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+            onClick={() => setMode('widget')}
+            className="flex items-center gap-2 px-3 py-2 rounded-full
+                       bg-white shadow-md text-sm text-gray-600 hover:text-[#F57224] border border-gray-200"
+          >
+            <Minimize2 size={14} /> Switch to Widget
+          </motion.button>
+          <motion.button
+            onClick={logout}
+            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+            className="flex items-center gap-2 px-3 py-2 rounded-full
+                       bg-white shadow-md text-sm text-red-600 hover:text-red-700 border border-red-100"
+            title="Logout"
+          >
+            <LogOut size={14} /> Logout
+          </motion.button>
+        </div>
       </div>
     )
   }
@@ -84,6 +95,15 @@ export default function App() {
             style={{ background: 'linear-gradient(135deg, #F57224, #ff8c42)' }}
           >
             <Maximize2 size={14} /> Open Full Chat
+          </motion.button>
+          
+          <motion.button
+            onClick={logout}
+            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium
+                       text-red-600 hover:bg-red-50 transition border border-red-100"
+          >
+            <LogOut size={14} /> Logout
           </motion.button>
         </div>
       </header>
@@ -139,7 +159,7 @@ export default function App() {
       </main>
 
       {/* Floating chat widget */}
-      <ChatWidget onLogout={logout} backendStatus={backendStatus} />
+      <ChatWidget backendStatus={backendStatus} />
     </div>
   )
 }

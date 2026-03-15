@@ -8,7 +8,7 @@ import { MessageCircle } from 'lucide-react'
 import ChatWindow from './ChatWindow.jsx'
 import useVoiceChat from '../hooks/useVoiceChat.js'
 
-export default function ChatWidget({ onLogout, backendStatus }) {
+export default function ChatWidget({ backendStatus }) {
   const [isOpen, setIsOpen] = useState(false)
   const chat = useVoiceChat()
 
@@ -46,7 +46,6 @@ export default function ChatWidget({ onLogout, backendStatus }) {
               chat={chat}
               onMinimize={() => setIsOpen(false)}
               onClose={() => setIsOpen(false)}
-              onLogout={onLogout}
               backendStatus={backendStatus}
             />
           </motion.div>

@@ -3,7 +3,7 @@
 // Orange gradient header with status, turn counter, and action buttons
 // =============================================================================
 import { motion } from 'framer-motion'
-import { ShoppingBag, RotateCcw, History, Minus, X, LogOut } from 'lucide-react'
+import { ShoppingBag, RotateCcw, History, Minus, X } from 'lucide-react'
 import AudioWaveform from './AudioWaveform.jsx'
 
 function IconBtn({ id, title, onClick, children }) {
@@ -23,7 +23,7 @@ function IconBtn({ id, title, onClick, children }) {
 
 export default function ChatHeader({
   onReset, onMinimize, onClose, onToggleHistory,
-  turnsUsed, turnsMax, status, isPlaying, onLogout, backendStatus
+  turnsUsed, turnsMax, status, isPlaying, backendStatus
 }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[#F57224] to-[#ff8c42] rounded-t-2xl flex-shrink-0">
@@ -70,11 +70,6 @@ export default function ChatHeader({
         {onReset && (
           <IconBtn id="btn-new-chat" title="New chat" onClick={onReset}>
             <RotateCcw size={16} />
-          </IconBtn>
-        )}
-        {onLogout && (
-          <IconBtn id="btn-logout" title="Logout" onClick={onLogout}>
-            <LogOut size={16} />
           </IconBtn>
         )}
         {onMinimize && (
