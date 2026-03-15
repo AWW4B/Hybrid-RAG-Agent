@@ -342,11 +342,45 @@ class VoiceEngine:
             )
             
             full_text = ""
+            yield_buffer = ""
+            hide_remaining = False
+
             for chunk in token_generator:
                 token = chunk["choices"][0]["text"]
                 full_text += token
-                yield {"token": token, "done": False}
-                await asyncio.sleep(0)  # yield to event loop
+
+                if hide_remaining:
+                    continue
+
+                yield_buffer += token
+
+                if "<STATE>" in yield_buffer:
+                    hide_remaining = True
+                    valid_text, _ = yield_buffer.split("<STATE>", 1)
+                    if valid_text:
+                        yield {"token": valid_text, "done": False}
+                    yield_buffer = ""
+                    continue
+
+                match_len = 0
+                for i in range(1, len("<STATE>") + 1):
+                    if yield_buffer.endswith("<STATE>"[:i]):
+                        match_len = i
+
+                if match_len > 0:
+                    safe_to_yield = yield_buffer[:-match_len]
+                    yield_buffer = yield_buffer[-match_len:]
+                else:
+                    safe_to_yield = yield_buffer
+                    yield_buffer = ""
+
+                if safe_to_yield:
+                    yield {"token": safe_to_yield, "done": False}
+
+                await asyncio.sleep(0)
+
+            if yield_buffer and not hide_remaining:
+                yield {"token": yield_buffer, "done": False}
 
         except Exception as e:
             logger.error(f"[engine] Stream error: {e}")
