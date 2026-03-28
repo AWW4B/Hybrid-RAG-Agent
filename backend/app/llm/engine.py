@@ -12,14 +12,26 @@
 # Engine.process_audio() chains them together — routes.py calls only this.
 # =============================================================================
 
+import io
 import logging
+import os
+import tempfile
 import time
 import asyncio
 from typing import Optional, AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
+
+import math
+import wave
+
+import numpy as np
+import soundfile as sf
+from scipy.signal import resample_poly
+import moonshine_onnx as moonshine
+from piper import PiperVoice
 from llama_cpp import Llama
 
-from app.core.config import MAX_TURNS, MAX_TOKENS
+from app.core.config import MAX_TURNS, MAX_TOKENS, N_CTX, N_THREADS, N_BATCH
 from app.memory.context import (
     build_inference_payload,
     add_message_to_chat,
@@ -37,43 +49,87 @@ logger = logging.getLogger(__name__)
 # Thread pool for blocking model inference (keeps async event loop free)
 _executor = ThreadPoolExecutor(max_workers=1)
 
+# =============================================================================
+# STT MODEL — Moonshine ASR (base), loaded once at startup.
+# moonshine-onnx runs on CPU via ONNX Runtime — no GPU required.
+# The model weights are downloaded automatically on first use (~70 MB).
+# =============================================================================
+_MOONSHINE_MODEL = "moonshine/base"   # swap to "moonshine/tiny" for faster CPU
+logger.info(f"[engine] Moonshine STT model: {_MOONSHINE_MODEL} (weights auto-downloaded on first call)")
 
 # =============================================================================
-# STAGE 1 — SPEECH-TO-TEXT
-# TODO Uwaid: Implement local Whisper STT here.
-#
-# Suggested approach:
-#   - Use faster-whisper (CTranslate2 backend) for CPU-efficient transcription.
-#   - Recommended model: "base" or "small" for sub-second latency on CPU.
-#   - Load model once at module level (not inside the function).
-#   - Run inference in _executor to avoid blocking the event loop.
-#
-# Example skeleton:
-#   from faster_whisper import WhisperModel
-#   _stt_model = WhisperModel("small", device="cpu", compute_type="int8")
+# TTS MODEL — Piper TTS, loaded once at startup.
+# Requires an .onnx voice model + matching .onnx.json config in /models/.
+# Download from: https://github.com/rhasspy/piper/releases
+# Default voice: en_US-lessac-medium (clear, neutral US-English male).
+# =============================================================================
+_piper_model_path = os.getenv("PIPER_MODEL", "/models/en_US-lessac-medium.onnx")
+try:
+    _tts_model = PiperVoice.load(_piper_model_path)
+    logger.info(f"✅ [engine] Piper TTS loaded: {_piper_model_path}")
+except Exception as _e:
+    logger.error(f"❌ [engine] Piper TTS load failed: {_e}")
+    _tts_model = None
+
+
+# =============================================================================
+# STAGE 1 — SPEECH-TO-TEXT  (Uwaid: Moonshine ASR)
+# Moonshine expects a mono, 16 kHz WAV file path.
+# Incoming audio may be WAV or WebM — we normalize it here before passing
+# it to the model so the caller never has to worry about format.
 # =============================================================================
 
 async def transcribe_audio(audio_bytes: bytes, session_id: str) -> str:
     """
-    Converts raw audio bytes (WebM/PCM from the browser) to a text transcript.
+    Converts raw audio bytes (WebM/WAV from the browser) to a text transcript
+    using Moonshine ASR (base model) running on CPU via ONNX Runtime.
 
     Args:
-        audio_bytes: Raw audio data received over WebSocket.
+        audio_bytes: Raw audio data received over WebSocket (WebM or WAV).
         session_id : Active session ID (for logging/tracing).
 
     Returns:
-        Transcribed text string.
-
-    # TODO Uwaid: Replace the placeholder below with real Whisper inference.
-    #   1. Write audio_bytes to a temp file (or use io.BytesIO if model supports it).
-    #   2. Run _stt_model.transcribe() in _executor (it's CPU-blocking).
-    #   3. Join segments and return the transcript string.
-    #   4. Handle empty/silence detection — return "" and let the caller skip LLM.
+        Transcribed text string, or "" if audio is silent / unintelligible.
     """
-    logger.info(f"[engine] STT stub called | session={session_id} | {len(audio_bytes)} bytes")
+    logger.info(f"[engine] STT called | session={session_id} | {len(audio_bytes)} bytes")
 
-    # TODO Uwaid: Remove this placeholder and implement real transcription.
-    raise NotImplementedError("STT not implemented yet — Uwaid's task.")
+    def _run_stt() -> str:
+        # Step 1 — write incoming bytes to a temp file (WebM or WAV)
+        suffix = ".wav" if audio_bytes[:4] == b"RIFF" else ".webm"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            raw_path = tmp.name
+
+        wav_path = None
+        try:
+            # Step 2 — decode + resample to 16 kHz mono (Moonshine requirement)
+            # Use ffmpeg since soundfile cannot read browser WebM blobs
+            import subprocess
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_tmp:
+                wav_path = wav_tmp.name
+                
+            subprocess.run([
+                "ffmpeg", "-y", "-i", raw_path,
+                "-ac", "1", "-ar", "16000",
+                wav_path
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # Step 4 — run Moonshine ASR
+            transcripts = moonshine.transcribe(wav_path, _MOONSHINE_MODEL)
+            transcript  = " ".join(t.strip() for t in transcripts).strip()
+            logger.info(f"[engine] STT done | '{transcript[:80]}' | session={session_id}")
+            return transcript
+
+        finally:
+            for p in (raw_path, wav_path):
+                if p:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _run_stt)
 
 
 # =============================================================================
@@ -84,10 +140,6 @@ async def transcribe_audio(audio_bytes: bytes, session_id: str) -> str:
 # If Uwaid wants to swap the LLM model, change _load_model() below and update
 # MODEL_PATH / generation parameters in config.py.
 # =============================================================================
-
-# Load the LLM using llama-cpp-python (imported from A2)
-import os
-from app.core.config import N_CTX, N_THREADS, N_BATCH
 
 # Read MODEL_PATH from env (set in docker-compose.yml to qwen2.5-3b-instruct-q4_k_m.gguf)
 _model_path = os.getenv("MODEL_PATH", "/models/qwen2.5-3b-instruct-q4_k_m.gguf")
@@ -145,41 +197,45 @@ async def _generate_text(session_id: str, user_text: str) -> str:
 
 
 # =============================================================================
-# STAGE 3 — TEXT-TO-SPEECH
-# TODO Uwaid: Implement local TTS here.
-#
-# Suggested approach:
-#   - Use Kokoro-82M (ONNX) or Piper TTS for low-latency CPU synthesis.
-#   - Output format: WAV or raw PCM — match whatever Rayan's frontend expects.
-#   - Load model once at module level.
-#   - Run inference in _executor (blocking call).
-#
-# Example skeleton:
-#   from kokoro_onnx import Kokoro
-#   _tts_model = Kokoro("kokoro-v0_19.onnx", "voices.bin")
+# STAGE 3 — TEXT-TO-SPEECH  (Uwaid: Piper TTS)
+# Piper synthesizes directly into a wave.Wave_write object — we point it at
+# an in-memory buffer so no disk I/O is needed at inference time.
 # =============================================================================
 
 async def synthesize_speech(text: str, session_id: str) -> bytes:
     """
-    Converts assistant reply text to audio bytes for streaming back to client.
+    Converts assistant reply text to WAV audio bytes using Piper TTS running
+    on CPU via ONNX Runtime (en_US-lessac-medium voice by default).
 
     Args:
         text      : Clean assistant reply from the LLM stage.
         session_id: Active session ID (for logging/tracing).
 
     Returns:
-        Audio bytes (WAV/PCM) ready to send over WebSocket.
-
-    # TODO Uwaid: Replace the placeholder below with real TTS inference.
-    #   1. Run _tts_model.create(text, voice="af_heart", speed=1.0) in _executor.
-    #   2. Convert samples/numpy array to WAV bytes (use soundfile or wave module).
-    #   3. Return the bytes — Awwab's WebSocket handler will chunk and stream them.
-    #   4. Target latency: < 500 ms for a typical 1-2 sentence reply.
+        WAV bytes ready to send over WebSocket to the browser.
     """
-    logger.info(f"[engine] TTS stub called | session={session_id} | {len(text)} chars")
+    if _tts_model is None:
+        raise RuntimeError("Piper TTS model is not loaded. Set PIPER_MODEL env var.")
 
-    # TODO Uwaid: Remove this placeholder and implement real speech synthesis.
-    raise NotImplementedError("TTS not implemented yet — Uwaid's task.")
+    logger.info(f"[engine] TTS called | session={session_id} | {len(text)} chars")
+
+    def _run_tts() -> bytes:
+        # synthesize() writes PCM frames directly into a wave.Wave_write.
+        # We back it with an in-memory BytesIO so nothing touches disk.
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(_tts_model.config.sample_rate)
+            _tts_model.synthesize(text, wav_file)
+        wav_bytes = buf.getvalue()
+        logger.info(
+            f"[engine] TTS done | session={session_id} | {len(wav_bytes)} bytes"
+        )
+        return wav_bytes
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _run_tts)
 
 
 # =============================================================================

@@ -36,10 +36,13 @@ RUN pip install --upgrade pip && \
 FROM python:3.11-slim AS runtime
 
 # Runtime system deps only (libstdc++ needed by llama-cpp shared libs)
+# espeak-ng is required by piper-tts for phoneme conversion
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     libgomp1 \
     curl \
+    espeak-ng \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from builder stage

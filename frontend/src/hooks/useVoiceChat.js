@@ -183,13 +183,18 @@ export default function useVoiceChat() {
       setMessages(prev => [...prev, voiceMsg])
       setIsLoading(true)
 
+      const chunks = []
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(e.data)           // binary frame → backend STT+LLM+TTS
+        if (e.data.size > 0) chunks.push(e.data)
+      }
+      recorder.onstop = () => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          const blob = new Blob(chunks, { type: MIME })
+          wsRef.current.send(blob)           // send full audio file → backend STT+LLM+TTS
         }
       }
 
-      recorder.start(500)  // chunk every 500 ms
+      recorder.start()  // collect until stopped
       setMicState('recording')
     } catch (err) {
       setVoiceError('Microphone access denied.')

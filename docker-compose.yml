@@ -11,7 +11,7 @@
 #                                          └─────────────┘
 #
 # Volumes:
-#   model-data  → GGUF model file (read-only in backend)    [Uwaid populates]
+#   model-data  → GGUF + Piper .onnx model files (read-only) [Uwaid populates]
 #   db-data     → SQLite sessions.db persistence
 #   redis-data  → Redis RDB snapshot persistence
 # =============================================================================
@@ -56,6 +56,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - MODEL_PATH=/models/qwen2.5-3b-instruct-q4_k_m.gguf
+      # Piper TTS voice model — Uwaid: place .onnx + .onnx.json in ./models/
+      # Download from: https://github.com/rhasspy/piper/releases/tag/v0.0.2
+      - PIPER_MODEL=/models/en_US-lessac-medium.onnx
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://localhost:3000}
       - JWT_SECRET=${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION}
       - PYTHONUNBUFFERED=1

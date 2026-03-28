@@ -17,6 +17,10 @@ limits==5.8.0
 llama_cpp_python==0.3.16
 MarkupSafe==3.0.3
 numpy==2.4.3
+useful-moonshine-onnx==20251121
+piper-tts==1.2.0
+soundfile==0.13.1
+scipy==1.15.2
 packaging==26.0
 pipreqs==0.4.13
 pyasn1==0.6.2
