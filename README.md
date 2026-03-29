@@ -256,7 +256,7 @@ curl -X POST "http://localhost:8000/benchmark?runs=10"
 | Min | 6,427 | 2,629 |
 | Max | 16,882 | 3,886 |
 
-> [!NOTE]
+> [!NOTE] 
 > These benchmarks were recorded on CPU using the Qwen-2.5-3B model. While the assignment target is **< 1000 ms**, the local CPU execution time is considerably higher due to the hardware constraints. The Full Pipeline (STT+LLM+TTS) currently exceeds the 15s timeout in some cases.
 
 Assignment target: **< 1000 ms** end-to-end per turn.
