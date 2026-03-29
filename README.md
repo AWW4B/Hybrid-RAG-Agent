@@ -5,7 +5,7 @@
 
 > A low-latency, voice-to-voice conversational shopping assistant running entirely on CPU using locally deployed open-weights models. No RAG, no external APIs, no cloud inference.
 
-**Live Demo:** [daraz-voice-assistant.vercel.app](https://daraz-voice-assistant.vercel.app)
+**Live Demo:** [daraz-voice-assistant.vercel.app](https://secure-scalable-voice-agent.vercel.app/)
 
 ---
 
@@ -321,7 +321,7 @@ docker compose down -v
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection — auto-set in Docker Compose |
 | `MODEL_PATH` | `/models/qwen2.5-3b-instruct-q4_k_m.gguf` | Model path (LLM GGUF) |
 | `PIPER_MODEL` | `/models/en_US-lessac-medium.onnx` | Model path (Piper TTS ONNX) |
-| `FRONTEND_ORIGIN` | `http://localhost:3000` | Frontend CORS origin (local or Vercel) |
+| `FRONTEND_ORIGIN` | `https://secure-scalable-voice-agent.vercel.app` | Frontend CORS origin (local or Vercel) |
 | `JWT_SECRET` | `CHANGE_ME_IN_PRODUCTION` | Change to any long random string before deploying |
 | `PYTHONUNBUFFERED` | `1` | Ensures Docker logs appear immediately |
 
