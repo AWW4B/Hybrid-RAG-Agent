@@ -15,9 +15,11 @@
 import io
 import logging
 import os
+import queue
 import tempfile
 import time
 import asyncio
+import threading
 from typing import Optional, AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 
@@ -152,7 +154,7 @@ try:
         n_threads=N_THREADS,
         n_batch=N_BATCH,
         n_gpu_layers=0,  # CPU-only for this assignment
-        verbose=False,
+        verbose=True,
     )
     logger.info("✅ [engine] LLM model loaded successfully.")
 except Exception as e:
@@ -356,7 +358,8 @@ class VoiceEngine:
     async def stream(self, session_id: str, user_message: str) -> AsyncGenerator[dict, None]:
         """
         Text-in / streaming-token-out wrapper. Used by WebSocket text fallback.
-        Yields tokens live from the LLM via thread-pool executor.
+        Uses an asyncio.Queue to bridge the LLM generator (running in a thread pool) 
+        to the async event loop, ensuring true non-blocking streaming.
         """
         guard_text = self._check_lifecycle_guards(session_id)
         if guard_text:
@@ -368,80 +371,84 @@ class VoiceEngine:
             return
 
         start = time.perf_counter()
-        
         from app.core.config import build_chatml_prompt, TEMPERATURE, TOP_P, REPEAT_PENALTY
         messages = build_inference_payload(session_id, user_message)
         prompt   = build_chatml_prompt(messages)
-        
+
         loop = asyncio.get_event_loop()
-        
-        # Execute the streaming iterator in the thread pool, yielding chunks
-        # back to the async loop so we don't block other requests.
-        try:
-            token_generator = await loop.run_in_executor(
-                _executor,
-                lambda: tuple(_llm(
+        token_queue = asyncio.Queue()
+
+        def _worker():
+            try:
+                for chunk in _llm(
                     prompt,
                     max_tokens=MAX_TOKENS,
-                    stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
+                    stop=['<|im_end|>', '<|endoftext|>', '<|im_start|>'],
                     echo=False,
                     temperature=TEMPERATURE,
                     top_p=TOP_P,
                     repeat_penalty=REPEAT_PENALTY,
                     stream=True,
-                ))
-            )
-            
-            full_text = ""
-            yield_buffer = ""
-            hide_remaining = False
+                ):
+                    loop.call_soon_threadsafe(token_queue.put_nowait, chunk)
+            except Exception as e:
+                loop.call_soon_threadsafe(token_queue.put_nowait, e)
+            finally:
+                loop.call_soon_threadsafe(token_queue.put_nowait, None)
 
-            for chunk in token_generator:
-                token = chunk["choices"][0]["text"]
-                full_text += token
+        import concurrent.futures
+        loop.run_in_executor(_executor, _worker)
 
-                if hide_remaining:
-                    continue
+        full_text = ""
+        yield_buffer = ""
+        hide_remaining = False
 
-                yield_buffer += token
+        while True:
+            item = await token_queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                logger.error(f"[engine] Stream worker error: {item}")
+                yield {"token": "", "done": True, "error": str(item)}
+                return
 
-                if "<STATE>" in yield_buffer:
-                    hide_remaining = True
-                    valid_text, _ = yield_buffer.split("<STATE>", 1)
-                    if valid_text:
-                        yield {"token": valid_text, "done": False}
-                    yield_buffer = ""
-                    continue
+            chunk = item
+            token = chunk["choices"][0]["text"]
+            full_text += token
 
-                match_len = 0
-                for i in range(1, len("<STATE>") + 1):
-                    if yield_buffer.endswith("<STATE>"[:i]):
-                        match_len = i
+            if hide_remaining:
+                continue
 
-                if match_len > 0:
-                    safe_to_yield = yield_buffer[:-match_len]
-                    yield_buffer = yield_buffer[-match_len:]
-                else:
-                    safe_to_yield = yield_buffer
-                    yield_buffer = ""
+            yield_buffer += token
 
-                if safe_to_yield:
-                    yield {"token": safe_to_yield, "done": False}
+            if "<STATE>" in yield_buffer:
+                hide_remaining = True
+                valid_text, _ = yield_buffer.split("<STATE>", 1)
+                if valid_text:
+                    yield {"token": valid_text, "done": False}
+                yield_buffer = ""
+                continue
 
-                await asyncio.sleep(0)
+            match_len = 0
+            for i in range(1, len("<STATE>") + 1):
+                if yield_buffer.endswith("<STATE>"[:i]):
+                    match_len = i
 
-            if yield_buffer and not hide_remaining:
-                yield {"token": yield_buffer, "done": False}
+            if match_len > 0:
+                safe_to_yield = yield_buffer[:-match_len]
+                yield_buffer = yield_buffer[-match_len:]
+            else:
+                safe_to_yield = yield_buffer
+                yield_buffer = ""
 
-        except Exception as e:
-            logger.error(f"[engine] Stream error: {e}")
-            yield {"token": "", "done": True, "error": str(e)}
-            return
-            
+            if safe_to_yield:
+                yield {"token": safe_to_yield, "done": False}
+
+        if yield_buffer and not hide_remaining:
+            yield {"token": yield_buffer, "done": False}
+
         latency_ms = (time.perf_counter() - start) * 1000
         clean_response = extract_and_strip_state(session_id, full_text)
-        
-        # Strip trailing newlines just in case
         clean_response = clean_response.strip()
 
         add_message_to_chat(session_id, "user", user_message)
@@ -461,7 +468,6 @@ class VoiceEngine:
             "turns_used": session["turns"],
             "turns_max": MAX_TURNS,
         }
-
 
 # Singleton — imported by routes.py
 llm_engine = VoiceEngine()

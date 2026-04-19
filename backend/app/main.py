@@ -140,11 +140,11 @@ app.add_middleware(PayloadSizeLimitMiddleware)
 # 2. slowapi rate limiting middleware
 app.add_middleware(SlowAPIMiddleware)
 
-# 3. CORS — strict: only allow the frontend origin configured via env var.
-#    In A2 this was allow_origins=["*"]. Locked down for A3.
+# 3. CORS — strict: allow the frontend origin(s) configured via env var.
+#    Supports comma-separated strings for multiple origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],  # e.g. "https://your-app.vercel.app"
+    allow_origins=[o.strip() for o in FRONTEND_ORIGIN.split(",")],
     allow_credentials=True,           # required for HttpOnly cookie auth
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Session-ID"],
@@ -158,7 +158,7 @@ app.include_router(router)
 
 
 # =============================================================================
-# FRONTEND STATIC SERVING (local dev only — nginx handles this in production)
+# FRONTEND STATIC SERVING
 # =============================================================================
 FRONTEND_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
