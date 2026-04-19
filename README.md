@@ -12,9 +12,9 @@
 
 | Member | Role | Files Owned |
 |--------|------|-------------|
-| **Awwab** | Backend & Infrastructure | `main.py`, `routes.py`, `config.py`, `context.py`, `Dockerfile`, `docker-compose.yml` |
+| **Awwab** | Infrastructure | `context.py`, `Dockerfile`, `docker-compose.yml` |
 | **Uwaid** | Model Engine | `engine.py` (STT + LLM + TTS implementations), `models/` |
-| **Rayan** | Frontend | `frontend/` (React voice UI, MediaRecorder, audio playback), `database.py`, `locustfile.py`, `benchmark_full.py` |
+| **Rayan** | Frontend & API Security | `frontend/`, `main.py`, `routes.py`, `config.py`, `database.py`, `locustfile.py`, `benchmark_full.py` |
 
 ---
 

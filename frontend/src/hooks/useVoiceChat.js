@@ -68,6 +68,32 @@ export default function useVoiceChat() {
         const msg = JSON.parse(event.data)
 
         if (msg.event === 'turn_complete') {
+          // Add the decoded voice message text to the UI
+          if (msg.user_text || msg.assistant_text) {
+             setMessages(prev => {
+                const newMsgs = [...prev]
+                // Replace the temporary "🎤 Voice message" with the actual user_text (or remove if blank)
+                const lastIdx = newMsgs.findLastIndex(m => m.isVoice && m.role === 'user')
+                if (lastIdx !== -1) {
+                   newMsgs[lastIdx] = { 
+                     ...newMsgs[lastIdx], 
+                     content: msg.user_text || '(Unintelligible audio)',
+                     isVoice: false // no longer just a placeholder
+                   }
+                }
+                
+                // Add the assistant's reply text
+                if (msg.assistant_text) {
+                  newMsgs.push({
+                     role: 'assistant',
+                     content: msg.assistant_text,
+                     timestamp: new Date().toISOString()
+                  })
+                }
+                return newMsgs
+             })
+          }
+
           setTurnsUsed(msg.turns_used ?? 0)
           setTurnsMax(msg.turns_max ?? 15)
           if (msg.status === 'ended') setStatus('ended')

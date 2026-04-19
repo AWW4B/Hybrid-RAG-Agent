@@ -265,7 +265,7 @@ class VoiceEngine:
             return farewell
         return None
 
-    async def process_audio(self, session_id: str, audio_bytes: bytes) -> bytes:
+    async def process_audio(self, session_id: str, audio_bytes: bytes) -> tuple[bytes, str, str]:
         """
         Full pipeline: audio_bytes → STT → LLM → TTS → audio_bytes.
 
@@ -274,7 +274,7 @@ class VoiceEngine:
             audio_bytes : Raw audio from the WebSocket client.
 
         Returns:
-            Audio bytes of the assistant's spoken reply.
+            Tuple containing (audio_response_bytes, user_text, assistant_text)
 
         Raises:
             RuntimeError : If the LLM/TTS is not loaded.
@@ -285,14 +285,14 @@ class VoiceEngine:
         guard_text = self._check_lifecycle_guards(session_id)
         if guard_text:
             # Even for guard responses, synthesize speech so the client gets audio.
-            return await synthesize_speech(guard_text, session_id)
+            return await synthesize_speech(guard_text, session_id), "", guard_text
 
         # --- Stage 1: STT ---
         user_text = await transcribe_audio(audio_bytes, session_id)
         if not user_text.strip():
             logger.info(f"[engine] Empty transcript | session={session_id}")
             silence_reply = "I didn't catch that — could you try again?"
-            return await synthesize_speech(silence_reply, session_id)
+            return await synthesize_speech(silence_reply, session_id), "", silence_reply
 
         logger.info(f"[engine] Transcript: '{user_text}' | session={session_id}")
 
@@ -314,7 +314,7 @@ class VoiceEngine:
         latency_ms = (time.perf_counter() - start) * 1000
         logger.info(f"[engine] Pipeline complete | session={session_id} | {latency_ms:.0f} ms")
 
-        return audio_response
+        return audio_response, user_text, assistant_text
 
     # -------------------------------------------------------------------------
     # LEGACY TEXT INTERFACE (kept for /chat REST endpoint & benchmark)

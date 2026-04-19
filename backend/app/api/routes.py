@@ -236,17 +236,19 @@ async def websocket_chat(websocket: WebSocket):
 
                 try:
                     # Full pipeline: STT → LLM → TTS
-                    response_audio = await llm_engine.process_audio(session_id, audio_bytes)
+                    response_audio, user_text, assistant_text = await llm_engine.process_audio(session_id, audio_bytes)
                     await websocket.send_bytes(response_audio)
 
                     # Send a control message so the frontend knows the turn is done
                     session = get_or_create_session(session_id)
                     await websocket.send_json({
-                        "event":      "turn_complete",
-                        "session_id": session_id,
-                        "status":     session["status"],
-                        "turns_used": session["turns"],
-                        "turns_max":  MAX_TURNS,
+                        "event":          "turn_complete",
+                        "session_id":     session_id,
+                        "status":         session["status"],
+                        "turns_used":     session["turns"],
+                        "turns_max":      MAX_TURNS,
+                        "user_text":      user_text,
+                        "assistant_text": assistant_text,
                     })
 
                 except NotImplementedError:
