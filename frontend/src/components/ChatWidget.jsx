@@ -8,9 +8,9 @@ import { MessageCircle } from 'lucide-react'
 import ChatWindow from './ChatWindow.jsx'
 import useVoiceChat from '../hooks/useVoiceChat.js'
 
-export default function ChatWidget({ backendStatus }) {
+export default function ChatWidget({ backendStatus, token }) {
   const [isOpen, setIsOpen] = useState(false)
-  const chat = useVoiceChat()
+  const chat = useVoiceChat({ token })
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">

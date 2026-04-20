@@ -13,7 +13,7 @@ import AdminDashboard from './components/AdminDashboard.jsx'
 import { healthCheck } from './utils/api.js'
 
 export default function App() {
-  const { authState, authError, isLoading, isAdmin, login, logout } = useAuth()
+  const { authState, authError, isLoading, isAdmin, token, login, logout } = useAuth()
   const [mode, setMode]                   = useState('widget')    // 'widget' | 'fullpage' | 'admin'
   const [backendStatus, setBackendStatus] = useState('checking')  // 'checking' | 'online' | 'offline'
 
@@ -47,7 +47,7 @@ export default function App() {
   if (mode === 'fullpage') {
     return (
       <div className="relative">
-        <FullPageChat backendStatus={backendStatus} />
+        <FullPageChat backendStatus={backendStatus} token={token} />
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
           <motion.button
             id="switch-widget-btn"
@@ -190,7 +190,7 @@ export default function App() {
       </main>
 
       {/* Floating chat widget */}
-      <ChatWidget backendStatus={backendStatus} />
+      <ChatWidget backendStatus={backendStatus} token={token} />
     </div>
   )
 }

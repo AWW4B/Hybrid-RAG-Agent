@@ -31,7 +31,7 @@ EXTRACTION_EVERY_N_TURNS   = 4      # Fire background CRM extraction every N tur
 
 
 WELCOME_MESSAGE = (
-    "Hi! I'm Daraz Assistant \ud83d\udcb0. I can help you find the best products "
+    "Hi! I'm Daraz Assistant \U0001F4B0. I can help you find the best products "
     "that match your needs and budget in PKR. What are you looking to buy today?"
 )
 

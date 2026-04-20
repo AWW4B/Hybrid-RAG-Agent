@@ -93,8 +93,13 @@ async def login(request: Request, response: Response, body: LoginRequest):
     # Timing-safe: always do a dummy hash check if user not found to prevent
     # username enumeration via timing side-channel
     if not user:
-        bcrypt_dummy = "$2b$12$invalidhashpadding000000000000000000000000000000000000000"
-        verify_password("dummy", bcrypt_dummy)
+        # Timing-safe: do a real-looking bcrypt check to prevent username enumeration
+        # via timing side-channel. Use a real pre-computed hash of a dummy password.
+        _dummy_hash = "$2b$12$KIXQu7Ti4eUiW5ILs5VPcuoSmHtfpHHHEuRqTfY7SyV3cnVEqOlDW"
+        try:
+            verify_password("dummy_timing_password", _dummy_hash)
+        except Exception:
+            pass
         raise HTTPException(401, detail="Invalid credentials.")
 
     # Account lockout check
@@ -168,4 +173,4 @@ async def refresh_token(request: Request, response: Response, user: dict = Depen
         httponly=True, secure=_secure, samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
-    return {"message": "Token refreshed."}
+    return {"access_token": token, "message": "Token refreshed."}

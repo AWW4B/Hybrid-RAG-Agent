@@ -20,7 +20,7 @@ const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   ? 'audio/webm;codecs=opus'
   : 'audio/webm'
 
-export default function useVoiceChat() {
+export default function useVoiceChat({ token } = {}) {
   const [messages, setMessages]     = useState([])
   const [isLoading, setIsLoading]   = useState(false)
   const [micState, setMicState]     = useState('idle')   // idle|requesting|recording|processing
@@ -36,6 +36,10 @@ export default function useVoiceChat() {
   const streamRef    = useRef(null)
   const audioRef     = useRef(null)
   const reconnTimer  = useRef(null)
+  const tokenRef     = useRef(token)   // always holds latest token without recreating connect
+
+  // Keep tokenRef in sync whenever the token prop changes
+  useEffect(() => { tokenRef.current = token }, [token])
 
   // ---------------------------------------------------------------------------
   // WebSocket lifecycle
@@ -43,7 +47,7 @@ export default function useVoiceChat() {
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState < 2) return // already open/connecting
 
-    const ws = createChatWebSocket(sessionIdRef.current)
+    const ws = createChatWebSocket(sessionIdRef.current, tokenRef.current)
     wsRef.current = ws
 
     ws.onopen = () => {

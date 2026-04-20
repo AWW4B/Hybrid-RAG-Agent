@@ -24,15 +24,26 @@ export default function useAuth() {
     } catch { return false }
   }
 
-  // Probe auth status on mount by hitting /health.
+  // Rehydrate token from httpOnly cookie on mount by calling /auth/refresh.
+  // This also validates the session — 401 means logged out, any other response = authenticated.
   useEffect(() => {
     let cancelled = false
-    healthCheck()
-      .then(() => { if (!cancelled) setAuthState('authenticated') })
+    refreshToken()
+      .then((data) => {
+        if (cancelled) return
+        const jwt = data?.access_token || null
+        setToken(jwt)
+        setIsAdmin(jwt ? _decodeAdmin(jwt) : false)
+        setAuthState('authenticated')
+      })
       .catch((err) => {
         if (cancelled) return
-        if (err?.status === 401) setAuthState('unauthenticated')
-        else setAuthState('authenticated')   // backend offline — bypass login for demo
+        if (err?.status === 401 || err?.status === 403) {
+          setAuthState('unauthenticated')
+        } else {
+          // Backend offline or network error — allow bypass for dev
+          setAuthState('unauthenticated')
+        }
       })
     return () => { cancelled = true }
   }, [])
