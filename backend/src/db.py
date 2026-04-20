@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # DB path — same data directory used by the legacy sync layer
 # ---------------------------------------------------------------------------
-_DB_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data")
-)
+_DB_DIR = os.getenv("DB_DIR", "/data")
 _DB_PATH = os.path.join(_DB_DIR, "sessions.db")
 
 

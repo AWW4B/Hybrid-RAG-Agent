@@ -47,9 +47,7 @@ def _key(session_id: str) -> str:
 # LEGACY SYNC DATABASE (SQLite — kept for backward compat with existing sessions)
 # New code should use src.db (aiosqlite) for new tables.
 # =============================================================================
-_DB_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "data")
-)
+_DB_DIR = os.getenv("DB_DIR", "/data")
 _DB_PATH = os.path.join(_DB_DIR, "sessions.db")
 
 

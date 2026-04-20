@@ -46,6 +46,7 @@ services:
   # BACKEND — FastAPI + llama-cpp-python + local STT/TTS
   # ---------------------------------------------------------------------------
   backend:
+    user: "root"
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -123,7 +124,7 @@ networks:
   rag-net:
     driver: bridge
     driver_opts:
-      com.docker.network.driver.mtu: 1400
+      com.docker.network.driver.mtu: "1400"
   external:
     driver: bridge
 

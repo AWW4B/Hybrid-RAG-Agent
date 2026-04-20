@@ -5,11 +5,12 @@
 # =============================================================================
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -133,12 +134,13 @@ async def login(request: Request, response: Response, body: LoginRequest):
     is_admin = bool(user.get("is_admin", 0))
     token = create_access_token(user["id"], user["username"], is_admin=is_admin)
 
+    _secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     response.set_cookie(
         "access_token",
         token,
         httponly=True,
-        secure=True,       # Requires HTTPS in production; set secure=False for local dev
-        samesite="strict",
+        secure=_secure,
+        samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
     logger.info(f"[auth] Login successful: {body.username}")
@@ -160,9 +162,10 @@ async def refresh_token(request: Request, response: Response, user: dict = Depen
         raise HTTPException(401, detail="User no longer exists.")
     is_admin = bool(db_user.get("is_admin", 0))
     token = create_access_token(user["sub"], user["username"], is_admin=is_admin)
+    _secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     response.set_cookie(
         "access_token", token,
-        httponly=True, secure=True, samesite="strict",
+        httponly=True, secure=_secure, samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
     return {"message": "Token refreshed."}

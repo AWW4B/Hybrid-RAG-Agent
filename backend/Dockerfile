@@ -27,11 +27,10 @@ COPY requirements.txt .
 
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir --prefix=/install \
-        --default-timeout=1000 --retries=10 \
-        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
-        --trusted-host abetlen.github.io \
-        -r requirements.txt
-
+    --default-timeout=1000 --retries=10 \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt \
+    --no-binary llama-cpp-python
 
 # -----------------------------------------------------------------------------
 # STAGE 2 — Runtime
