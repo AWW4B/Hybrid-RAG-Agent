@@ -52,6 +52,13 @@ export async function logout() {
   return jsonFetch('/auth/logout', { method: 'POST' })
 }
 
+export async function register(username, password, email) {
+  return jsonFetch('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username: sanitize(username), email, password }),
+  })
+}
+
 export async function refreshToken() {
   return jsonFetch('/auth/refresh', { method: 'POST' })
 }
@@ -90,8 +97,10 @@ export async function deleteSession(sessionId) {
 // WebSocket factory — /ws/chat?session_id=<uuid>
 // The backend auto-detects binary (audio) vs text (JSON) frames.
 // ---------------------------------------------------------------------------
-export function createChatWebSocket(sessionId) {
-  return new WebSocket(`${WS_BASE}/ws/chat?session_id=${sessionId}`)
+export function createChatWebSocket(sessionId, token) {
+  const params = new URLSearchParams({ session_id: sessionId })
+  if (token) params.set('token', token)
+  return new WebSocket(`${WS_BASE}/ws/chat?${params.toString()}`)
 }
 
 // ---------------------------------------------------------------------------

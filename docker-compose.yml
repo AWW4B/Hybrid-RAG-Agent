@@ -65,8 +65,8 @@ services:
       - db-data:/data
       - ./models:/models:ro
       - ./chroma_db:/app/chroma_db
-      - ./dataset:/app/dataset:ro
-      - ./backend/app:/app/app       # Live code reload
+      - ./dataset:/app/data:ro
+      - ./backend/src:/app/src       # Live code reload
       - hf-cache:/root/.cache/huggingface # Model cache
 
     networks:

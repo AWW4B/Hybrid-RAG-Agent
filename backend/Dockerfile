@@ -59,7 +59,7 @@ RUN useradd --create-home --shell /bin/bash appuser
 WORKDIR /app
 
 # Copy application source
-COPY app/ ./app/
+COPY src/ ./src/
 
 # /data is the SQLite volume mount point (see docker-compose.yml)
 # /models is where the GGUF model file lives (mounted as read-only volume)
@@ -83,7 +83,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # For 4 concurrent users on CPU, 1 worker + ThreadPool is the right model.
 # Multiple workers would each load the GGUF into RAM — not viable on a laptop.
 # -----------------------------------------------------------------------------
-CMD ["uvicorn", "app.main:app", \
+CMD ["uvicorn", "src.main:app", \
     "--host", "0.0.0.0", \
     "--port", "8000", \
     "--workers", "1", \
