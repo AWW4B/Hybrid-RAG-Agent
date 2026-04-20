@@ -220,7 +220,7 @@ def get_welcome_message(session_id: str) -> dict:
 # CONTEXT WINDOW BUILDER (unchanged logic — Redis transparent to callers)
 # =============================================================================
 
-def build_inference_payload(session_id: str, new_user_message: str) -> list:
+def build_inference_payload(session_id: str, new_user_message: str, rag_context: str = "") -> list:
     """
     Assembles the prompt payload for the LLM engine.
     Sliding window keeps only the last SLIDING_WINDOW_SIZE messages;
@@ -230,7 +230,7 @@ def build_inference_payload(session_id: str, new_user_message: str) -> list:
 
     system_msg = {
         "role":    "system",
-        "content": build_system_prompt(session["state"]),
+        "content": build_system_prompt(session["state"], rag_context=rag_context),
     }
 
     trimmed = session["history"][-SLIDING_WINDOW_SIZE:]
@@ -242,6 +242,7 @@ def build_inference_payload(session_id: str, new_user_message: str) -> list:
         f"1 system + {len(trimmed)} history + 1 user = {len(payload)} messages"
     )
     return payload
+
 
 
 # =============================================================================

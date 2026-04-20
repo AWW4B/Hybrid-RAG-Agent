@@ -26,7 +26,12 @@ WORKDIR /build
 COPY requirements.txt .
 
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --prefix=/install --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu -r requirements.txt
+    pip install --no-cache-dir --prefix=/install \
+        --default-timeout=1000 --retries=10 \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+        --trusted-host abetlen.github.io \
+        -r requirements.txt
+
 
 # -----------------------------------------------------------------------------
 # STAGE 2 — Runtime
@@ -79,8 +84,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Multiple workers would each load the GGUF into RAM — not viable on a laptop.
 # -----------------------------------------------------------------------------
 CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "1", \
-     "--loop", "uvloop", \
-     "--timeout-keep-alive", "75"]
+    "--host", "0.0.0.0", \
+    "--port", "8000", \
+    "--workers", "1", \
+    "--loop", "uvloop", \
+    "--timeout-keep-alive", "75"]

@@ -45,6 +45,8 @@ from app.memory.context import (
     is_conversation_resolved,
     get_or_create_session,
 )
+from app.rag.retrieval.retriever import retriever
+
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +172,18 @@ async def _generate_text(session_id: str, user_text: str) -> str:
     if _llm is None:
         raise RuntimeError("LLM not loaded. Ensure MODEL_PATH is correct.")
 
-    from app.core.config import build_chatml_prompt, TEMPERATURE, TOP_P, REPEAT_PENALTY
+    from app.core.config import build_chatml_prompt, TEMPERATURE, TOP_P, REPEAT_PENALTY, RAG_MAX_CONTEXT_TOKENS, estimate_tokens
 
-    messages = build_inference_payload(session_id, user_text)
+    # Fetch RAG context
+    rag_context = retriever.get_relevant_context(user_text)
+    
+    # Simple truncation for context window safety (cap at RAG_MAX_CONTEXT_TOKENS)
+    if estimate_tokens(rag_context) > RAG_MAX_CONTEXT_TOKENS:
+        rag_context = rag_context[:RAG_MAX_CONTEXT_TOKENS * 4]
+
+    messages = build_inference_payload(session_id, user_text, rag_context=rag_context)
     prompt   = build_chatml_prompt(messages)
+
 
     loop = asyncio.get_event_loop()
 
@@ -371,9 +381,18 @@ class VoiceEngine:
             return
 
         start = time.perf_counter()
-        from app.core.config import build_chatml_prompt, TEMPERATURE, TOP_P, REPEAT_PENALTY
-        messages = build_inference_payload(session_id, user_message)
+        from app.core.config import build_chatml_prompt, TEMPERATURE, TOP_P, REPEAT_PENALTY, RAG_MAX_CONTEXT_TOKENS, estimate_tokens
+        
+        # Fetch RAG context
+        rag_context = retriever.get_relevant_context(user_message)
+        
+        # Simple truncation for context window safety
+        if estimate_tokens(rag_context) > RAG_MAX_CONTEXT_TOKENS:
+            rag_context = rag_context[:RAG_MAX_CONTEXT_TOKENS * 4]
+
+        messages = build_inference_payload(session_id, user_message, rag_context=rag_context)
         prompt   = build_chatml_prompt(messages)
+
 
         loop = asyncio.get_event_loop()
         token_queue = asyncio.Queue()

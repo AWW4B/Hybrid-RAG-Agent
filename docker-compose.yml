@@ -64,8 +64,15 @@ services:
     volumes:
       - db-data:/data
       - ./models:/models:ro
+      - ./chroma_db:/app/chroma_db
+      - ./dataset:/app/dataset:ro
+      - ./backend/app:/app/app       # Live code reload
+      - hf-cache:/root/.cache/huggingface # Model cache
+
     networks:
       - internal
+      - rag-net
+
     ports:
       - "8000:8000"
 
@@ -113,9 +120,15 @@ services:
 networks:
   internal:
     driver: bridge
+  rag-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1400
   external:
     driver: bridge
+
 
 volumes:
   redis-data:
   db-data:
+  hf-cache:

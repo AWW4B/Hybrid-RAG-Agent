@@ -10,13 +10,18 @@ import os
 MAX_TURNS      = 15
 MAX_TOKENS     = 512
 N_CTX          = 2048
-N_THREADS      = 4
-N_BATCH        = 1024
+N_THREADS      = 6
+N_BATCH        = 512
 TEMPERATURE    = 0.7
 TOP_P          = 0.9
 REPEAT_PENALTY = 1.1
 
 SLIDING_WINDOW_SIZE = 10  # Last 5 full exchanges
+
+# RAG Configuration
+RAG_TOP_K = 4
+RAG_MAX_CONTEXT_TOKENS = 1024  # Budget for retrieved context
+
 
 WELCOME_MESSAGE = (
     "Hi! I'm Daraz Assistant 🛍️. I can help you find the best products "
@@ -103,45 +108,66 @@ You do not have access to live Daraz inventory. To help users, you must suggest 
 - NEVER invent specific prices or fake product links.
 - Phase 1 (Gathering): Ask for a budget in PKR and preferences if unknown.
 - Phase 2 (Recommending): Once you have the item and budget, provide 2-3 general category recommendations or search terms they can use on Daraz.
+- **Grounded Reasoning (Math Guardrail)**: If you find a price in the 'Grounded Knowledge', you MUST perform this mental check:
+  1. Identify user budget (e.g., 14,000).
+  2. Identify item price (e.g., 13,655).
+  3. If Price is LESS THAN or EQUAL to Budget, you MUST say they can afford it.
+  4. If Price is GREATER than Budget, explain they are short by [Difference].
+  Do not skip this math check.
 - Phase 3 (Closing): After giving recommendations, ask: "Is there anything else I can help you find?"
 - Phase 4 (Farewell): If the user has no more questions, say: "Thank you for shopping with Daraz! Have a wonderful day."
+"""
 
+FORMATTING_INSTRUCTIONS = """
 ## Response Format (MANDATORY)
 Every response MUST have two parts:
 1. Your actual conversational reply (warm, helpful, 1-4 sentences).
 2. Immediately after, a STATE tag on a new line tracking what you know.
 
-Example of a correctly formatted response:
-Great choice! Laptops on Daraz range widely — could you share your budget in PKR so I can point you to the right options?
+Example:
+Great choice! Could you share your budget in PKR?
 <STATE>Budget: Unknown, Item: Laptop, Preferences: None, Resolved: no</STATE>
-
-Always write a real, helpful reply. Never copy the example text above.
 """
 
+def build_system_prompt(extracted_state: dict, rag_context: str = "") -> str:
+    # 1. Start with core identity and rules
+    prompt = BASE_SYSTEM_PROMPT + "\n"
 
-def build_system_prompt(extracted_state: dict) -> str:
-    if not extracted_state:
-        return BASE_SYSTEM_PROMPT
+    # 2. Inject Grounded Knowledge (RAG)
+    if rag_context:
+        prompt += "\n## Relevant Product & Policy Information (Grounded Knowledge)\n"
+        prompt += rag_context + "\n"
 
-    facts = []
-    if extracted_state.get("budget") not in (None, "Unknown"):
-        facts.append(f"- Budget: {extracted_state['budget']} PKR")
-    if extracted_state.get("item") not in (None, "Unknown"):
-        facts.append(f"- Looking for: {extracted_state['item']}")
-    if extracted_state.get("preferences") not in (None, "None"):
-        facts.append(f"- Preferences: {extracted_state['preferences']}")
+    # 3. Inject User Memory
+    if extracted_state:
+        facts = []
+        if extracted_state.get("budget") not in (None, "Unknown"):
+            facts.append(f"- Budget: {extracted_state['budget']} PKR")
+        if extracted_state.get("item") not in (None, "Unknown"):
+            facts.append(f"- Looking for: {extracted_state['item']}")
+        if extracted_state.get("preferences") not in (None, "None"):
+            facts.append(f"- Preferences: {extracted_state['preferences']}")
+        
+        if facts:
+            prompt += "\n## Already Known About This User (DO NOT ask again)\n"
+            prompt += "\n".join(facts) + "\n"
 
-    if not facts:
-        return BASE_SYSTEM_PROMPT
+    # 4. ALWAYS end with the formatting instructions so they are the "last thing" the model sees.
+    prompt += "\n" + FORMATTING_INSTRUCTIONS
+    return prompt
 
-    injected = "\n## Already Known About This User (DO NOT ask again)\n"
-    injected += "\n".join(facts)
-    return BASE_SYSTEM_PROMPT + injected
 
 
 def build_chatml_prompt(messages: list) -> str:
     prompt = ""
     for msg in messages:
-        prompt += f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+        role = msg['role']
+        content = msg['content']
+        prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+    
+    # 5. Inject a FINAL format reminder as the last part of the prompt 
+    # to ensure the STATE tag is never forgotten.
+    prompt += "<|im_start|>system\nREMINDER: You MUST finish your response with the <STATE> tag on a new line.<|im_end|>\n"
+    
     prompt += "<|im_start|>assistant\n"
     return prompt

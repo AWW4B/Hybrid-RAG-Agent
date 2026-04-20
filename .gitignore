@@ -221,3 +221,9 @@ data/
 
 # Load test results
 results/
+
+# Local RAG and Cache
+chroma_db/
+.cache/
+backend/app/__pycache__/
+data/sessions.db
