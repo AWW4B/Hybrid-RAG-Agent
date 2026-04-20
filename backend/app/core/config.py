@@ -130,8 +130,19 @@ Great choice! Could you share your budget in PKR?
 """
 
 def build_system_prompt(extracted_state: dict, rag_context: str = "") -> str:
+    from app.rag.tools.orchestrator import orchestrator
+    
     # 1. Start with core identity and rules
     prompt = BASE_SYSTEM_PROMPT + "\n"
+
+    # 1.5 Inject Tool Capabilities
+    prompt += orchestrator.get_tools_prompt()
+    prompt += """
+## Tool Usage rules:
+- If a user asks for something covered by a tool (weather, shipping, searching catalog), you MUST call the tool first.
+- To call a tool, output the <TOOL_CALL> JSON and NOTHING ELSE in that turn.
+- The system will provide the result in the next turn.
+"""
 
     # 2. Inject Grounded Knowledge (RAG)
     if rag_context:

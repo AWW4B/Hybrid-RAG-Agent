@@ -8,6 +8,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Configuration
 DOCS_DIR = os.getenv("DOCS_DIR", "/app/dataset")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "/app/chroma_db")
+
+# Local fallback for development on host
+if not os.path.exists(DOCS_DIR):
+    DOCS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "dataset"))
+if not os.path.exists(os.path.dirname(CHROMA_PATH)) and not CHROMA_PATH.startswith("/"):
+    CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "chroma_db"))
+elif not os.path.exists(CHROMA_PATH) and CHROMA_PATH == "/app/chroma_db":
+    CHROMA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "chroma_db"))
+
 COLLECTION_NAME = "daraz_kb"
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 512  # in characters (approximate to tokens for this model)

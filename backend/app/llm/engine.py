@@ -46,6 +46,7 @@ from app.memory.context import (
     get_or_create_session,
 )
 from app.rag.retrieval.retriever import retriever
+from app.rag.tools.orchestrator import orchestrator
 
 
 logger = logging.getLogger(__name__)
@@ -137,12 +138,8 @@ async def transcribe_audio(audio_bytes: bytes, session_id: str) -> str:
 
 
 # =============================================================================
-# STAGE 2 — LLM TEXT GENERATION
-# The business logic (context window, STATE extraction, lifecycle) from A2 is
-# preserved here. Uwaid should NOT need to touch this stage.
-#
-# If Uwaid wants to swap the LLM model, change _load_model() below and update
-# MODEL_PATH / generation parameters in config.py.
+# STAGE 2 — LLM ORCHESTRATION LOOP
+# The business logic handles RAG retrieval and tool calling in a recursive loop.
 # =============================================================================
 
 # Read MODEL_PATH from env (set in docker-compose.yml to qwen2.5-3b-instruct-q4_k_m.gguf)
@@ -187,25 +184,43 @@ async def _generate_text(session_id: str, user_text: str) -> str:
 
     loop = asyncio.get_event_loop()
 
-    raw_response = await loop.run_in_executor(
-        _executor,
-        lambda: "".join(
-            chunk["choices"][0]["text"]
-            for chunk in _llm(
-                prompt,
-                max_tokens=MAX_TOKENS,
-                stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
-                echo=False,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                repeat_penalty=REPEAT_PENALTY,
-                stream=True,
-            )
-        ),
-    )
+    # Loop to handle tool updates (multi-turn reasoning)
+    # We limit to 2 tool calls per turn to prevent infinite loops
+    for _ in range(2):
+        raw_response = await loop.run_in_executor(
+            _executor,
+            lambda: "".join(
+                chunk["choices"][0]["text"]
+                for chunk in _llm(
+                    prompt,
+                    max_tokens=MAX_TOKENS,
+                    stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
+                    echo=False,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    repeat_penalty=REPEAT_PENALTY,
+                    stream=True,
+                )
+            ),
+        )
 
-    clean = extract_and_strip_state(session_id, raw_response)
-    return clean
+        tool_result = await orchestrator.parse_and_execute(raw_response)
+        if tool_result:
+            # If a tool was called, add result to history and ask LLM again
+            logger.info(f"[engine] Tool result obtained: {tool_result[:50]}...")
+            
+            # We don't use add_message_to_chat here yet because it's internal reasoning
+            # We build a new prompt with the tool result injected
+            messages.append({"role": "assistant", "content": raw_response})
+            messages.append({"role": "system", "content": tool_result})
+            prompt = build_chatml_prompt(messages)
+            continue # Try generating again with the tool output
+        else:
+            # No tool call, return final response
+            clean = extract_and_strip_state(session_id, raw_response)
+            return clean
+
+    return "I apologize, but I encountered an issue processing your request with my tools."
 
 
 # =============================================================================
@@ -394,77 +409,89 @@ class VoiceEngine:
         prompt   = build_chatml_prompt(messages)
 
 
-        loop = asyncio.get_event_loop()
-        token_queue = asyncio.Queue()
+        # --- MULTI-TURN REASONING LOOP FOR STREAMING ---
+        # We handle up to 2 tool calls per turn.
+        # If a tool call is detected, we don't stream it to the user.
+        for _ in range(2):
+            full_text = ""
+            yield_buffer = ""
+            hide_remaining = False
+            token_queue = asyncio.Queue()
 
-        def _worker():
-            try:
-                for chunk in _llm(
-                    prompt,
-                    max_tokens=MAX_TOKENS,
-                    stop=['<|im_end|>', '<|endoftext|>', '<|im_start|>'],
-                    echo=False,
-                    temperature=TEMPERATURE,
-                    top_p=TOP_P,
-                    repeat_penalty=REPEAT_PENALTY,
-                    stream=True,
-                ):
-                    loop.call_soon_threadsafe(token_queue.put_nowait, chunk)
-            except Exception as e:
-                loop.call_soon_threadsafe(token_queue.put_nowait, e)
-            finally:
-                loop.call_soon_threadsafe(token_queue.put_nowait, None)
+            # Start worker for this generation turn
+            def _worker_v2(current_prompt):
+                try:
+                    for chunk in _llm(
+                        current_prompt,
+                        max_tokens=MAX_TOKENS,
+                        stop=['<|im_end|>', '<|endoftext|>', '<|im_start|>'],
+                        echo=False,
+                        temperature=TEMPERATURE,
+                        top_p=TOP_P,
+                        repeat_penalty=REPEAT_PENALTY,
+                        stream=True,
+                    ):
+                        loop.call_soon_threadsafe(token_queue.put_nowait, chunk)
+                except Exception as e:
+                    loop.call_soon_threadsafe(token_queue.put_nowait, e)
+                finally:
+                    loop.call_soon_threadsafe(token_queue.put_nowait, None)
 
-        import concurrent.futures
-        loop.run_in_executor(_executor, _worker)
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(_executor, _worker_v2, prompt)
 
-        full_text = ""
-        yield_buffer = ""
-        hide_remaining = False
+            current_turn_full_text = ""
+            while True:
+                item = await token_queue.get()
+                if item is None: break
+                if isinstance(item, Exception):
+                    logger.error(f"[engine] Stream worker error: {item}")
+                    yield {"token": "", "done": True, "error": str(item)}
+                    return
 
-        while True:
-            item = await token_queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                logger.error(f"[engine] Stream worker error: {item}")
-                yield {"token": "", "done": True, "error": str(item)}
-                return
+                token = item["choices"][0]["text"]
+                current_turn_full_text += token
+                
+                # Buffer logic to hide <STATE> tags or <TOOL_CALL> tags from user
+                yield_buffer += token
+                
+                if "<STATE>" in yield_buffer or "<TOOL_CALL>" in yield_buffer:
+                    hide_remaining = True
+                    # If we hit a tool call, we definitely stop yielding this turn's text
+                    # because we want to run the tool and generate a final answer.
+                
+                if not hide_remaining:
+                    # Partial matching logic for tags (avoid yielding bits of <STA...)
+                    match_len = 0
+                    for tag in ["<STATE>", "<TOOL_CALL>"]:
+                        for i in range(1, len(tag) + 1):
+                            if yield_buffer.endswith(tag[:i]):
+                                match_len = max(match_len, i)
+                    
+                    if match_len > 0:
+                        safe_to_yield = yield_buffer[:-match_len]
+                        yield_buffer = yield_buffer[-match_len:]
+                    else:
+                        safe_to_yield = yield_buffer
+                        yield_buffer = ""
+                    
+                    if safe_to_yield:
+                        yield {"token": safe_to_yield, "done": False}
 
-            chunk = item
-            token = chunk["choices"][0]["text"]
-            full_text += token
-
-            if hide_remaining:
-                continue
-
-            yield_buffer += token
-
-            if "<STATE>" in yield_buffer:
-                hide_remaining = True
-                valid_text, _ = yield_buffer.split("<STATE>", 1)
-                if valid_text:
-                    yield {"token": valid_text, "done": False}
-                yield_buffer = ""
-                continue
-
-            match_len = 0
-            for i in range(1, len("<STATE>") + 1):
-                if yield_buffer.endswith("<STATE>"[:i]):
-                    match_len = i
-
-            if match_len > 0:
-                safe_to_yield = yield_buffer[:-match_len]
-                yield_buffer = yield_buffer[-match_len:]
+            # Turn is done — check if it was a tool call
+            tool_result = await orchestrator.parse_and_execute(current_turn_full_text)
+            if tool_result:
+                logger.info(f"[engine] Streaming turn yielded tool call. Running tool...")
+                messages.append({"role": "assistant", "content": current_turn_full_text})
+                messages.append({"role": "system", "content": tool_result})
+                prompt = build_chatml_prompt(messages)
+                continue # Generate again with tool output
             else:
-                safe_to_yield = yield_buffer
-                yield_buffer = ""
-
-            if safe_to_yield:
-                yield {"token": safe_to_yield, "done": False}
-
-        if yield_buffer and not hide_remaining:
-            yield {"token": yield_buffer, "done": False}
+                # Normal response finished
+                full_text = current_turn_full_text
+                if yield_buffer and not hide_remaining:
+                    yield {"token": yield_buffer, "done": False}
+                break
 
         latency_ms = (time.perf_counter() - start) * 1000
         clean_response = extract_and_strip_state(session_id, full_text)

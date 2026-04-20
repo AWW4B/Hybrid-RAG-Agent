@@ -26,10 +26,10 @@ WORKDIR /build
 COPY requirements.txt .
 
 RUN pip install --upgrade pip && \
+    # Force build from source to avoid musl/glibc mismatch issues
+    CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" \
     pip install --no-cache-dir --prefix=/install \
         --default-timeout=1000 --retries=10 \
-        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
-        --trusted-host abetlen.github.io \
         -r requirements.txt
 
 

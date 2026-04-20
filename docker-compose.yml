@@ -61,6 +61,9 @@ services:
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://localhost:3000}
       - JWT_SECRET=${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION}
       - PYTHONUNBUFFERED=1
+      # RAG + Tools paths (must match volume mounts below)
+      - CHROMA_PATH=/app/chroma_db
+      - DOCS_DIR=/app/dataset
     volumes:
       - db-data:/data
       - ./models:/models:ro
@@ -71,7 +74,6 @@ services:
 
     networks:
       - internal
-      - rag-net
 
     ports:
       - "8000:8000"
@@ -86,7 +88,6 @@ services:
     working_dir: /app
     volumes:
       - ./frontend:/app          # live source mounts — HMR works
-      - /app/node_modules        # anonymous volume so host node_modules don't shadow
     command: sh -c "npm install && npm run dev"
     ports:
       - "3000:3000"
@@ -120,10 +121,6 @@ services:
 networks:
   internal:
     driver: bridge
-  rag-net:
-    driver: bridge
-    driver_opts:
-      com.docker.network.driver.mtu: 1400
   external:
     driver: bridge
 
