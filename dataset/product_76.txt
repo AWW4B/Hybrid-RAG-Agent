@@ -1,8 +1,8 @@
-Title: Product_76
+Title: Bata Women's Designer Collection
 Category: Fashion > Women
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_76 by Bata is a high-quality item in our Fashion collection.
+Content: The Bata Women's Designer Collection by Bata is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 4.9/5 based on 825 reviews.
 Deal Alert: Currently on sale for 85,177 PKR (Save 40%).
 ---

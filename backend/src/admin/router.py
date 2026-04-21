@@ -238,7 +238,7 @@ async def concurrency_test(n_users: int = 5):
         p95_lat = round(sorted(latencies)[int(len(latencies) * 0.95)], 1) if len(latencies) > 1 else (latencies[0] if latencies else 0)
 
         # Final summary
-        yield f"data: {_json.dumps({
+        summary_data = {
             'done': True,
             'n_users':        n_users,
             'total_time_ms':  round(total_time, 1),
@@ -247,7 +247,8 @@ async def concurrency_test(n_users: int = 5):
             'errors':         errors,
             'status':         'success' if errors == 0 else 'partial_failure',
             'per_user':       per_user,
-        })}\n\n"
+        }
+        yield f"data: {_json.dumps(summary_data)}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 

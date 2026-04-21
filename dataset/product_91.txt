@@ -1,8 +1,8 @@
-Title: Product_91
+Title: Service Women's Fashion Heels
 Category: Shoes > Women Shoes
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_91 by Service is a high-quality item in our Shoes collection.
+Content: The Service Women's Fashion Heels by Service is a high-quality item in our Shoes collection.
 Detailed Sentiment: Users rate this 4.9/5 based on 674 reviews.
 Deal Alert: Currently on sale for 58,715 PKR (Save 24%).
 ---

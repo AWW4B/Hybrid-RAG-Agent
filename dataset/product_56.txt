@@ -1,8 +1,8 @@
-Title: Product_56
+Title: Khaadi High-Performance Laptop
 Category: Electronics > Laptop
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_56 by Khaadi is a high-quality item in our Electronics collection.
+Content: The Khaadi High-Performance Laptop by Khaadi is a high-quality item in our Electronics collection.
 Detailed Sentiment: Users rate this 3.5/5 based on 658 reviews.
 Deal Alert: Currently on sale for 15,201 PKR (Save 37%).
 ---

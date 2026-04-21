@@ -1,8 +1,8 @@
-Title: Product_48
+Title: Dawlance SmartPhone Pro
 Category: Electronics > Mobile
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_48 by Dawlance is a high-quality item in our Electronics collection.
+Content: The Dawlance SmartPhone Pro by Dawlance is a high-quality item in our Electronics collection.
 Detailed Sentiment: Users rate this 3.9/5 based on 37 reviews.
 Deal Alert: Currently on sale for 31,230 PKR (Save 8%).
 ---

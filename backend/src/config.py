@@ -126,6 +126,14 @@ You do not have access to live Daraz inventory. To help users, you must suggest 
   Do not skip this math check.
 - Phase 3 (Closing): After giving recommendations, ask: "Is there anything else I can help you find?"
 - Phase 4 (Farewell): If the user has no more questions, say: "Thank you for shopping with Daraz! Have a wonderful day."
+
+## Tool Usage (MANDATORY FORMAT)
+If you need info you don't have, you MUST use this format:
+<TOOL_CALL>{"name": "tool_name", "parameters": {"arg": "value"}}</TOOL_CALL>
+
+Examples:
+- User: "What is 15% of 25000?"
+  Assistant: <TOOL_CALL>{"name": "calculate", "parameters": {"expression": "25000 * 0.15"}}</TOOL_CALL>
 """
 
 FORMATTING_INSTRUCTIONS = """
@@ -139,11 +147,15 @@ Great choice! Could you share your budget in PKR?
 <STATE>Budget: Unknown, Item: Laptop, Preferences: None, Resolved: no</STATE>
 """
 
-def build_system_prompt(extracted_state: dict, rag_context: str = "") -> str:
+def build_system_prompt(extracted_state: dict, rag_context: str = "", tools_prompt: str = "") -> str:
     # 1. Start with core identity and rules
     prompt = BASE_SYSTEM_PROMPT + "\n"
 
-    # 2. Inject Grounded Knowledge (RAG)
+    # 2. Inject Tool Descriptions (ReAct strategy)
+    if tools_prompt:
+        prompt += tools_prompt + "\n"
+
+    # 3. Inject Grounded Knowledge (RAG)
     if rag_context:
         prompt += "\n## Relevant Product & Policy Information (Grounded Knowledge)\n"
         prompt += rag_context + "\n"

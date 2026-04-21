@@ -10,7 +10,6 @@ import asyncio
 from typing import Dict, Any, Optional
 
 # --- Tool Imports ---
-from src.tools.weather import get_weather
 from src.tools.crm import handle_crm_tool
 from src.tools.shipping import estimate_shipping
 from src.tools.product_search import search_products
@@ -23,17 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Metadata registry for LLM prompt injection
 TOOLS_METADATA = [
-    {
-        "name": "get_weather",
-        "description": "Get current weather conditions for a city in Pakistan.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "City name, e.g. Karachi"}
-            },
-            "required": ["city"]
-        }
-    },
     {
         "name": "get_crm_profile",
         "description": "Retrieve the current user's personalized shopping profile and preferences.",
@@ -105,7 +93,6 @@ TOOLS_METADATA = [
 class ToolOrchestrator:
     def __init__(self):
         self.tools = {
-            "get_weather": get_weather,
             "get_crm_profile": handle_crm_tool,
             "update_crm_profile": handle_crm_tool,
             "search_products": search_products,

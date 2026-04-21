@@ -1,8 +1,8 @@
-Title: Product_58
+Title: J. Men's Casual Wear
 Category: Fashion > Men
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_58 by J. is a high-quality item in our Fashion collection.
+Content: The J. Men's Casual Wear by J. is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 4.0/5 based on 584 reviews.
 Deal Alert: Currently on sale for 96,481 PKR (Save 6%).
 ---

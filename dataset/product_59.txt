@@ -1,8 +1,8 @@
-Title: Product_59
+Title: Outfitters Fully Automatic Washing Machine
 Category: Home Appliances > Washing Machine
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_59 by Outfitters is a high-quality item in our Home Appliances collection.
+Content: The Outfitters Fully Automatic Washing Machine by Outfitters is a high-quality item in our Home Appliances collection.
 Detailed Sentiment: Users rate this 4.8/5 based on 603 reviews.
 Deal Alert: Currently on sale for 27,490 PKR (Save 26%).
 ---

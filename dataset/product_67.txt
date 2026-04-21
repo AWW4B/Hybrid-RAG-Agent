@@ -1,8 +1,8 @@
-Title: Product_67
+Title: Dawlance Men's Athletic Shoes
 Category: Shoes > Men Shoes
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_67 by Dawlance is a high-quality item in our Shoes collection.
+Content: The Dawlance Men's Athletic Shoes by Dawlance is a high-quality item in our Shoes collection.
 Detailed Sentiment: Users rate this 3.2/5 based on 388 reviews.
 Deal Alert: Currently on sale for 144,518 PKR (Save 6%).
 ---

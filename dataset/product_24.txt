@@ -1,8 +1,8 @@
-Title: Product_24
+Title: Orient Men's Casual Wear
 Category: Fashion > Men
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_24 by Orient is a high-quality item in our Fashion collection.
+Content: The Orient Men's Casual Wear by Orient is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 3.9/5 based on 198 reviews.
 Deal Alert: Currently on sale for 120,275 PKR (Save 5%).
 ---

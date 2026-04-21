@@ -1,8 +1,8 @@
-Title: Product_100
+Title: Khaadi Women's Fashion Heels
 Category: Shoes > Women Shoes
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_100 by Khaadi is a high-quality item in our Shoes collection.
+Content: The Khaadi Women's Fashion Heels by Khaadi is a high-quality item in our Shoes collection.
 Detailed Sentiment: Users rate this 3.4/5 based on 972 reviews.
 Deal Alert: Currently on sale for 87,307 PKR (Save 24%).
 ---

@@ -1,5 +1,15 @@
 import os
 import logging
+
+# --- MONKEY PATCH: Silencing persistent ChromaDB telemetry errors ---
+try:
+    import chromadb.telemetry.product.posthog as posthog
+    if hasattr(posthog, "Posthog"):
+        posthog.Posthog.capture = lambda *args, **kwargs: None
+except Exception:
+    pass
+# --------------------------------------------------------------------
+
 from functools import lru_cache
 from typing import List, Optional
 from chromadb import PersistentClient

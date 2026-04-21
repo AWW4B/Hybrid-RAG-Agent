@@ -1,8 +1,8 @@
-Title: Product_8
+Title: Khaadi SmartPhone Pro
 Category: Electronics > Mobile
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_8 by Khaadi is a high-quality item in our Electronics collection.
+Content: The Khaadi SmartPhone Pro by Khaadi is a high-quality item in our Electronics collection.
 Detailed Sentiment: Users rate this 4.7/5 based on 98 reviews.
 ---
 Metadata:

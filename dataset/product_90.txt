@@ -1,8 +1,8 @@
-Title: Product_90
+Title: Outfitters Men's Casual Wear
 Category: Fashion > Men
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_90 by Outfitters is a high-quality item in our Fashion collection.
+Content: The Outfitters Men's Casual Wear by Outfitters is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 3.0/5 based on 46 reviews.
 Deal Alert: Currently on sale for 33,040 PKR (Save 20%).
 ---

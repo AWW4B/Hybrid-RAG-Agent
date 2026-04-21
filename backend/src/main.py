@@ -14,6 +14,26 @@
 import json
 import logging
 import os
+
+# --- NUCLEAR OPTION: Silencing persistent ChromaDB telemetry errors ---
+class TelemetryFilter(logging.Filter):
+    def filter(self, record):
+        return "telemetry" not in record.getMessage().lower() and "posthog" not in record.getMessage().lower()
+
+logging.getLogger("chromadb").addFilter(TelemetryFilter())
+logging.getLogger("chromadb").setLevel(logging.ERROR)
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+# --------------------------------------------------------------------
+
+# --- MONKEY PATCH: Silencing persistent ChromaDB telemetry errors ---
+try:
+    import chromadb.telemetry.product.posthog as posthog
+    if hasattr(posthog, "Posthog"):
+        posthog.Posthog.capture = lambda *args, **kwargs: None
+except Exception:
+    pass
+# --------------------------------------------------------------------
+import os
 import uuid
 import time
 from contextlib import asynccontextmanager#

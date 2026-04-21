@@ -486,9 +486,13 @@ def build_inference_payload(
 
     crm_block = session.get("_cached_crm_block", "")
 
+    # Inject Tool descriptions
+    from src.tools.orchestrator import orchestrator
+    tools_prompt = orchestrator.get_tools_prompt()
+
     system_msg = {
         "role":    "system",
-        "content": crm_block + build_system_prompt(session["state"], rag_context=rag_context),
+        "content": crm_block + build_system_prompt(session["state"], rag_context=rag_context, tools_prompt=tools_prompt),
     }
 
     # Token-budget-aware trim: keep the most recent messages that fit

@@ -2,6 +2,7 @@ import os
 import logging
 from typing import List
 from chromadb import PersistentClient
+from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -29,7 +30,10 @@ logger = logging.getLogger(__name__)
 
 class Indexer:
     def __init__(self):
-        self.client = PersistentClient(path=CHROMA_PATH)
+        self.client = PersistentClient(
+            path=CHROMA_PATH,
+            settings=Settings(anonymized_telemetry=False)
+        )
         self.model = SentenceTransformer(EMBED_MODEL_NAME)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=CHUNK_SIZE,

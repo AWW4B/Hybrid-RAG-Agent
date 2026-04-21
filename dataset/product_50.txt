@@ -1,8 +1,8 @@
-Title: Product_50
+Title: Service Men's Casual Wear
 Category: Fashion > Men
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_50 by Service is a high-quality item in our Fashion collection.
+Content: The Service Men's Casual Wear by Service is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 4.6/5 based on 383 reviews.
 Deal Alert: Currently on sale for 142,429 PKR (Save 28%).
 ---

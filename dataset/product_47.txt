@@ -1,8 +1,8 @@
-Title: Product_47
+Title: Sapphire High-Performance Laptop
 Category: Electronics > Laptop
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_47 by Sapphire is a high-quality item in our Electronics collection.
+Content: The Sapphire High-Performance Laptop by Sapphire is a high-quality item in our Electronics collection.
 Detailed Sentiment: Users rate this 4.3/5 based on 298 reviews.
 Deal Alert: Currently on sale for 49,719 PKR (Save 46%).
 ---

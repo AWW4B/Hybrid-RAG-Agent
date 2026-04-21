@@ -1,8 +1,8 @@
-Title: Product_82
+Title: J. Fully Automatic Washing Machine
 Category: Home Appliances > Washing Machine
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_82 by J. is a high-quality item in our Home Appliances collection.
+Content: The J. Fully Automatic Washing Machine by J. is a high-quality item in our Home Appliances collection.
 Detailed Sentiment: Users rate this 3.7/5 based on 36 reviews.
 Deal Alert: Currently on sale for 31,722 PKR (Save 43%).
 ---

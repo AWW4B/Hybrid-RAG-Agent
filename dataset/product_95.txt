@@ -1,8 +1,8 @@
-Title: Product_95
+Title: Khaadi Women's Designer Collection
 Category: Fashion > Women
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_95 by Khaadi is a high-quality item in our Fashion collection.
+Content: The Khaadi Women's Designer Collection by Khaadi is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 3.0/5 based on 745 reviews.
 Deal Alert: Currently on sale for 161,713 PKR (Save 4%).
 ---

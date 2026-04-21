@@ -1,8 +1,8 @@
-Title: Product_1
+Title: Khaadi Men's Casual Wear
 Category: Fashion > Men
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_1 by Khaadi is a high-quality item in our Fashion collection.
+Content: The Khaadi Men's Casual Wear by Khaadi is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 4.8/5 based on 267 reviews.
 Deal Alert: Currently on sale for 168,446 PKR (Save 13%).
 ---
