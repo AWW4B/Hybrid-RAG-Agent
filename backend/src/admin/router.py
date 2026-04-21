@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from src.auth.security import require_admin
 from src import db
-from src.conversation.memory import list_active_sessions, get_or_create_session
+from src.conversation.memory import list_active_sessions, get_or_create_session, refresh_crm_block
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,12 @@ admin_router = APIRouter(
 # Benchmark queries (mirrors benchmarks/runner.py)
 # ---------------------------------------------------------------------------
 BENCHMARK_QUERIES = [
-    # General Domain (Shopping)
-    {"query": "Show me Samsung phones under 150000 PKR",          "type": "general"},
-    {"query": "What are the best laptops for students on Daraz?",  "type": "general"},
-    {"query": "Compare the iPhone 15 and Samsung S24",            "type": "general"},
-    {"query": "I need a gaming chair, budget 25000",              "type": "general"},
-    {"query": "What's the return policy on electronics?",         "type": "general"},
+    # General Domain (Shopping - Branded)
+    {"query": "Find a premium Men's Kurta from Khaadi",           "type": "general"},
+    {"query": "I want to buy the Dell High-Performance Laptop",   "type": "general"},
+    {"query": "Compare the Khaadi Kurta and the Service Shoes",   "type": "general"},
+    {"query": "Is there any smart TV under 60000 PKR?",           "type": "general"},
+    {"query": "What is the return policy for electronics?",       "type": "general"},
 
     # Out-of-Domain (Should be rejected)
     {"query": "Who is the prime minister of Pakistan?",           "type": "ood"},
@@ -134,8 +134,23 @@ async def run_benchmark(n_runs: int = 3):
                                        "only help", "only assist", "not able to", "outside"]
                         )
 
+                    # Persist result to DB
+                    await db.insert_benchmark(
+                        test_name=f"Seq: {query[:30]}",
+                        metric="latency_ms",
+                        value=latency,
+                        session_id=session_id,
+                        notes=f"type={test_type}, passed={passed}"
+                    )
+
                     yield f"data: {_json.dumps({'query': query, 'latency_ms': round(latency, 1), 'status': 'ok', 'passed': passed, 'type': test_type, 'response_preview': result['response'][:80] + '...'})}\n\n"
                 except Exception as e:
+                    await db.insert_benchmark(
+                        test_name=f"Seq Error: {query[:30]}",
+                        metric="error",
+                        value=0,
+                        notes=str(e)
+                    )
                     yield f"data: {_json.dumps({'query': query, 'status': 'error', 'error': str(e), 'type': test_type})}\n\n"
 
 
@@ -248,6 +263,15 @@ async def concurrency_test(n_users: int = 5):
             'status':         'success' if errors == 0 else 'partial_failure',
             'per_user':       per_user,
         }
+
+        # Persist Concurrency result
+        await db.insert_benchmark(
+            test_name=f"Concurrency: {n_users} Users",
+            metric="avg_latency_ms",
+            value=avg_lat,
+            notes=f"Total: {round(total_time, 1)}ms, Errors: {errors}"
+        )
+
         yield f"data: {_json.dumps(summary_data)}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")

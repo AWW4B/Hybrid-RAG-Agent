@@ -187,9 +187,13 @@ function BenchmarkPanel() {
     setRunning(true)
     setDone(false)
     try {
+      const token = sessionStorage.getItem('auth_token')
       const res = await fetch(API_BASE + '/admin/benchmark/run', {
         method: 'POST',
         credentials: 'include',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        }
       })
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
