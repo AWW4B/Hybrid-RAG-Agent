@@ -63,6 +63,42 @@ function SectionHeader({ title, onRefresh, refreshing }) {
   )
 }
 
+function LogConsole({ logs, onClear }) {
+  const scrollRef = useRef(null)
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [logs])
+
+  return (
+    <div className="bg-gray-900 rounded-xl overflow-hidden mb-6 border border-gray-800 shadow-lg">
+      <div className="bg-gray-800 px-3 py-1.5 flex items-center justify-between border-b border-gray-700">
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
+            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500/80" />
+          </div>
+          <span className="text-[10px] text-gray-400 font-mono uppercase tracking-tighter ml-2">Live Engine Logs</span>
+        </div>
+        {onClear && (
+          <button onClick={onClear} className="text-[10px] text-gray-500 hover:text-white transition uppercase font-bold">Clear</button>
+        )}
+      </div>
+      <div ref={scrollRef} className="p-4 h-48 overflow-y-auto font-mono text-[11px] leading-relaxed scrollbar-hide">
+        {logs.map((L, i) => (
+          <div key={i} className="mb-1 flex gap-3">
+            <span className="text-gray-600 shrink-0">[{new Date(L.time).toLocaleTimeString()}]</span>
+            <span className={L.level === 'error' ? 'text-red-400' : L.level === 'warn' ? 'text-yellow-400' : 'text-green-400/90'}>
+              {L.message}
+            </span>
+          </div>
+        ))}
+        {logs.length === 0 && <p className="text-gray-700 italic">No logs yet. Run a benchmark to see activity…</p>}
+      </div>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Sessions panel
 // ---------------------------------------------------------------------------
@@ -177,10 +213,15 @@ function CompactionPanel() {
 // ---------------------------------------------------------------------------
 function BenchmarkPanel() {
   const [results, setResults]   = useState([])
+  const [logs, setLogs]         = useState([])
   const [running, setRunning]   = useState(false)
   const [done, setDone]         = useState(false)
   const [concurrency, setConcurrency] = useState(null)
   const [testingConcurrency, setTestingConcurrency] = useState(false)
+
+  const addLog = (msg, level = 'info') => {
+    setLogs(prev => [...prev.slice(-49), { message: msg, level, time: Date.now() }])
+  }
 
   const runBenchmark = async () => {
     setResults([])
@@ -207,7 +248,8 @@ function BenchmarkPanel() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           const json = JSON.parse(line.slice(6))
-          if (json.done) { setDone(true) }
+          if (json.done) { setDone(true); addLog("🏁 Benchmark session finished.") }
+          else if (json.type === 'log') { addLog(json.message, json.level) }
           else { setResults(prev => [...prev, json]) }
         }
       }
@@ -242,6 +284,9 @@ function BenchmarkPanel() {
           const json = JSON.parse(line.slice(6))
           if (json.done) {
             setConcurrency(json)
+            addLog("🏁 Concurrency test finished.")
+          } else if (json.type === 'log') {
+            addLog(json.message, json.level)
           } else if (json.individual_result) {
             setConcurrency(prev => ({
               ...prev,
@@ -256,6 +301,7 @@ function BenchmarkPanel() {
 
   return (
     <section className="space-y-6">
+      <LogConsole logs={logs} onClear={() => setLogs([])} />
       <div>
         <SectionHeader title="Functional Benchmarks" />
         <div className="flex gap-3 mb-4">

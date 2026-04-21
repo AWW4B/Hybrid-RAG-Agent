@@ -110,19 +110,22 @@ async def run_benchmark(n_runs: int = 3):
 
         # ── WARMUP PHASE ──────────────────────────────────────────────────
         # Silent turns to prime the model before timing starts
+        yield f"data: {_json.dumps({'type': 'log', 'message': '🔥 [Engine] Warming up models (priming KV cache)...'})}\n\n"
         warmup_session = f"warmup-{_uuid.uuid4().hex[:8]}"
         try:
             await asyncio.wait_for(
                 llm_engine.generate(session_id=warmup_session, user_message="Hello, warmup"),
                 timeout=120.0
             )
-        except:
-            pass # Warmup failures are ignored; we just want to prime the model
+            yield f"data: {_json.dumps({'type': 'log', 'message': '✅ [Engine] Warmup complete. Matrix paged to RAM.'})}\n\n"
+        except Exception as e:
+            yield f"data: {_json.dumps({'type': 'log', 'message': f'⚠️ [Engine] Warmup skipped/error: {str(e)}'})}\n\n"
 
         # ── General + OOD queries ───────────────────────────────────────────
-        for entry in BENCHMARK_QUERIES:
+        for i, entry in enumerate(BENCHMARK_QUERIES):
             query     = entry["query"]
             test_type = entry["type"]
+            yield f"data: {_json.dumps({'type': 'log', 'message': f'🚀 [Bench] Running Quality Test {i+1}/{len(BENCHMARK_QUERIES)}: {query[:30]}...'})}\n\n"
 
             latencies = []
             for _ in range(n_runs):
@@ -219,6 +222,7 @@ async def concurrency_test(n_users: int = 5):
 
     async def _stream():
         # ── WARMUP PHASE ──────────────────────────────────────────────────
+        yield f"data: {_json.dumps({'type': 'log', 'message': '🔥 [Stress] Initializing concurrency warmup...'})}\n\n"
         try:
             await asyncio.wait_for(
                 llm_engine.generate(f"warmup-conc-{_uuid.uuid4().hex[:8]}", "Warmup"),
@@ -226,6 +230,7 @@ async def concurrency_test(n_users: int = 5):
             )
         except: pass
         
+        yield f"data: {_json.dumps({'type': 'log', 'message': f'🚀 [Stress] Simulating {n_users} parallel users. Expected saturation: High.'})}\n\n"
         query   = "What is the best Samsung phone under 50000 PKR?"
         sessions = [str(_uuid.uuid4()) for _ in range(n_users)]
 
