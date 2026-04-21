@@ -108,6 +108,17 @@ async def run_benchmark(n_runs: int = 3):
         import json as _json
         import uuid as _uuid
 
+        # ── WARMUP PHASE ──────────────────────────────────────────────────
+        # Silent turns to prime the model before timing starts
+        warmup_session = f"warmup-{_uuid.uuid4().hex[:8]}"
+        try:
+            await asyncio.wait_for(
+                llm_engine.generate(session_id=warmup_session, user_message="Hello, warmup"),
+                timeout=120.0
+            )
+        except:
+            pass # Warmup failures are ignored; we just want to prime the model
+
         # ── General + OOD queries ───────────────────────────────────────────
         for entry in BENCHMARK_QUERIES:
             query     = entry["query"]
@@ -207,6 +218,14 @@ async def concurrency_test(n_users: int = 5):
     import statistics as _stats
 
     async def _stream():
+        # ── WARMUP PHASE ──────────────────────────────────────────────────
+        try:
+            await asyncio.wait_for(
+                llm_engine.generate(f"warmup-conc-{_uuid.uuid4().hex[:8]}", "Warmup"),
+                timeout=120.0
+            )
+        except: pass
+        
         query   = "What is the best Samsung phone under 50000 PKR?"
         sessions = [str(_uuid.uuid4()) for _ in range(n_users)]
 
