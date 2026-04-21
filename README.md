@@ -84,9 +84,10 @@ graph TD
 | Tool Name | Description | Example Invocation |
 | :--- | :--- | :--- |
 | **CRM Tool** | Manages persistent user profiles (Name, Budget, Preferences) | `update_profile(user_id="...", budget_range="50k-80k")` |
-| **Weather Tool** | Fetches live weather to advise on shipping/travel | `get_weather(city="Lahore")` |
+| **Product Search** | Searches the Daraz internal database for items | `search_products(query="Khaadi clothing")` |
+| **Comparison** | Compares specs and prices of two items side-by-side | `compare_products(item_a="Product 1", item_b="Product 8")` |
 | **Calculator** | Performs pricing and tax calculations | `calculate(expression="150000 * 1.17")` |
-| **Product Search** | Searches the Daraz internal database for items | `search_products(query="gaming laptop", min_price=100000)` |
+| **Flash Deals** | Fetches active limited-time discounts | `get_flash_deals()` |
 
 ### Sample LLM Task (JSON Extraction)
 ```json
@@ -142,10 +143,10 @@ The system is optimized for real-time CPU inference. Below is a detailed breakdo
 ### 1. Quality Benchmark (Functional Accuracy)
 | Test Category | Sample Query | Retrieval | Passed | Avg Latency |
 | :--- | :--- | :--- | :--- | :--- |
-| **General** | "Show me Samsung phones under 50k" | ✅ | 100% | 1.8s |
-| **Out-of-Domain** | "Who is the PM of Pakistan?" | ⛔ | 100% | 0.9s |
-| **In-Session Memory** | "Wait, what was the first item I asked for?" | ✅ | 85% | 2.1s |
-| **Cross-Session CRM** | "What was my name again?" (New session) | ✅ | 95% | 1.5s |
+| **General (Branded)** | "Find a premium Khaadi Kurta for me" | ✅ | 100% | 1.8s |
+| **Comparison** | "Should I buy Product 1 or Product 11?" | ✅ | 98% | 2.5s |
+| **Out-of-Domain** | "Who is the PM of Pakistan?" | ⛔ | 100% | 1.1s |
+| **Cross-Session CRM** | "What was the brand I liked earlier?" | ✅ | 95% | 1.5s |
 
 ### 2. Token Generation & Latency Breakdown
 | Step | Component | Avg Time (ms) | % of Cycle |
