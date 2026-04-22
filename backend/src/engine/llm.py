@@ -206,6 +206,13 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
             logger.info(f"🛠️ [engine] Tool call detected on attempt {attempt+1}")
             session = get_or_create_session(session_id)
             tool_result = await orchestrator.parse_and_execute(raw_response, session["user_id"], session)
+            
+            # CRITICAL: Force session persistence and CRM refresh if a tool marked it dirty
+            if session.get("crm_dirty"):
+                from src.conversation.memory import _save_to_redis
+                _save_to_redis(session_id, session)
+                await refresh_crm_block(session_id)
+
             # Inject tool result as a system-like injection to guide the final answer
             current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool execution finished. Use this data to answer the user: {tool_result}]"
             continue
@@ -219,6 +226,16 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
 # ORCHESTRATION LAYER
 # =============================================================================
 class VoiceEngine:
+    async def warmup(self) -> None:
+        """Forces the loading of LLM and TTS models."""
+        loop = asyncio.get_event_loop()
+        logger.info("[engine] Warmup: Loading models...")
+        # Load LLM
+        await loop.run_in_executor(_executor, get_llm)
+        # Load TTS
+        await loop.run_in_executor(_executor, get_tts)
+        logger.info("[engine] Warmup: Models loaded successfully.")
+
 
     def _check_lifecycle_guards(self, session_id: str) -> Optional[str]:
         if get_session_status(session_id) == "ended":
@@ -396,6 +413,13 @@ class VoiceEngine:
                 logger.info(f"🛠️ [engine-stream] Tool call detected on attempt {attempt+1}")
                 session = get_or_create_session(session_id)
                 tool_result = await orchestrator.parse_and_execute(full_text, session["user_id"], session)
+                
+                # CRITICAL: Force session persistence and CRM refresh if a tool marked it dirty
+                if session.get("crm_dirty"):
+                    from src.conversation.memory import _save_to_redis
+                    _save_to_redis(session_id, session)
+                    await refresh_crm_block(session_id)
+
                 # Clear buffer and update prompt for final answer
                 current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool results received. Provide the final answer now: {tool_result}]"
                 continue

@@ -25,12 +25,21 @@ export default function SessionSidebar({ currentSessionId, onLoadSession, onNewC
 
   useEffect(() => {
     if (!isOpen) return
+    
+    const fetch = () => {
+      getSessions()
+        .then(({ sessions: s }) => setSessions(s || []))
+        .catch(() => setSessions([]))
+        .finally(() => setLoading(false))
+    }
+
     setLoading(true)
-    getSessions()
-      .then(({ sessions: s }) => setSessions(s || []))
-      .catch(() => setSessions([]))
-      .finally(() => setLoading(false))
-  }, [isOpen])
+    fetch()
+
+    // Auto-refresh history every 10s while the sidebar is open
+    const interval = setInterval(fetch, 10000)
+    return () => clearInterval(interval)
+  }, [isOpen, currentSessionId])
 
   const handleDelete = async (e, sid) => {
     e.stopPropagation()

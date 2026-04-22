@@ -11,6 +11,7 @@
 
 import json
 import re
+import src.db as db
 import logging
 import os
 import sqlite3
@@ -73,6 +74,7 @@ def init_db() -> None:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id  TEXT PRIMARY KEY,
+                user_id     TEXT,
                 title       TEXT DEFAULT 'New Chat',
                 state       TEXT DEFAULT '{}',
                 turns       INTEGER DEFAULT 0,
@@ -119,9 +121,10 @@ def save_session(session_id: str, session_data: dict) -> None:
 
         conn.execute(
             """
-            INSERT INTO sessions (session_id, title, state, turns, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (session_id, user_id, title, state, turns, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
+                user_id    = excluded.user_id,
                 title      = excluded.title,
                 state      = excluded.state,
                 turns      = excluded.turns,
@@ -130,6 +133,7 @@ def save_session(session_id: str, session_data: dict) -> None:
             """,
             (
                 session_id,
+                session_data.get("user_id"),
                 title,
                 json.dumps(session_data.get("state", {})),
                 session_data.get("turns", 0),
@@ -170,8 +174,7 @@ def load_session(session_id: str) -> Optional[dict]:
             "state":       json.loads(row["state"]) if row["state"] else {},
             "turns":       row["turns"],
             "status":      row["status"],
-            # user_id / turn_count not in legacy table — default to None/0
-            "user_id":     None,
+            "user_id":     row.get("user_id"),
             "turn_count":  0,
             "crm_dirty":   False,
         }
@@ -182,20 +185,24 @@ def load_session(session_id: str) -> Optional[dict]:
         conn.close()
 
 
-def list_sessions() -> list:
+def list_sessions(user_id: Optional[str] = None) -> list:
     conn = _get_connection()
     try:
-        rows = conn.execute(
-            """
+        sql = """
             SELECT s.session_id, s.title, s.status, s.turns,
                    s.created_at, s.updated_at,
                    COUNT(m.id) as message_count
             FROM sessions s
             LEFT JOIN messages m ON s.session_id = m.session_id
-            GROUP BY s.session_id
-            ORDER BY s.updated_at DESC
-            """
-        ).fetchall()
+        """
+        params = []
+        if user_id:
+            sql += " WHERE s.user_id = ?"
+            params.append(user_id)
+            
+        sql += " GROUP BY s.session_id ORDER BY s.updated_at DESC"
+        
+        rows = conn.execute(sql, params).fetchall()
         sessions = []
         for row in rows:
             last_msg = conn.execute(
@@ -292,6 +299,18 @@ _STATE_KV_PATTERN = re.compile(r"(Budget|Item|Preferences|Resolved)\s*:\s*([^,<]
 
 def init_sessions_from_db() -> None:
     init_db()
+    conn = _get_connection()
+    try:
+        # Migration: Add user_id column if it doesn't exist
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+            conn.commit()
+            logger.info("[context] Added user_id column to sessions table.")
+        except Exception:
+            pass # Column already exists
+    finally:
+        conn.close()
+
     loaded = load_all_sessions_to_memory()
     for session_id, session in loaded.items():
         _save_to_redis(session_id, session)
@@ -416,11 +435,27 @@ def list_active_sessions() -> list:
         return []
 
 
-def get_welcome_message(session_id: str) -> dict:
-    get_or_create_session(session_id)
+async def get_welcome_message(session_id: str) -> dict:
+    session = get_or_create_session(session_id)
+    user_id = session.get("user_id")
+    
+    display_msg = WELCOME_MESSAGE
+    
+    if user_id:
+        try:
+            profile = await db.get_crm_profile(user_id)
+            if profile and profile.get("name"):
+                name = profile["name"]
+                display_msg = (
+                    f"Hi {name}! I'm Daraz Assistant \U0001F4B0. I'm ready to help you find the best "
+                    "products and deals again. What can I look for you today?"
+                )
+        except Exception as e:
+            logger.warning(f"[memory] Failed to personalize welcome message: {e}")
+
     return {
         "session_id": session_id,
-        "response":   WELCOME_MESSAGE,
+        "response":   display_msg,
         "latency_ms": 0.0,
         "status":     "active",
         "turns_used": 0,
@@ -472,18 +507,7 @@ def build_inference_payload(
     session = get_or_create_session(session_id)
 
     # Build CRM context block (cached on session to avoid per-token DB hits)
-    crm_block = session.get("_cached_crm_block", "")
-    if session.get("crm_dirty") or (not crm_block and session.get("user_id")):
-        user_id = session.get("user_id")
-        if user_id:
-            # Sync fallback: fetch from Redis-cached session state.
-            # Async fetch happens in the engine's async turn handler instead.
-            # Here we use the last-known cached value; _cached_crm_block is
-            # updated by engine.llm after an async CRM fetch.
-            pass
-        session["crm_dirty"] = False
-        _save_to_redis(session_id, session)
-
+    # The 'crm_dirty' flag is cleared ONLY by the async refresh_crm_block() function.
     crm_block = session.get("_cached_crm_block", "")
 
     # Inject Tool descriptions
@@ -497,6 +521,12 @@ def build_inference_payload(
 
     # Token-budget-aware trim: keep the most recent messages that fit
     trimmed = _fit_history_to_budget(session["history"], CONTEXT_BUDGET_TOKENS)
+    
+    # [Diagnostic] Verify identity and CRM presence in logs
+    user_id = session.get("user_id")
+    crm_len = len(crm_block) if crm_block else 0
+    logger.info(f"🧠 [engine] Context Ready: user_id={user_id}, session={session_id}, crm_chars={crm_len}")
+
     return [system_msg] + trimmed + [{"role": "user", "content": new_user_message}]
 
 

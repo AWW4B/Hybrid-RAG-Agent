@@ -271,7 +271,8 @@ async def chat(
 @router.get("/session/welcome/{session_id}", tags=["Session"])
 @limiter.limit("30/minute")
 async def welcome(request: Request, session_id: str):
-    return get_welcome_message(session_id)
+    logger.info(f"👋 [main] Generating welcome for session={session_id}")
+    return await get_welcome_message(session_id)
 
 
 @router.post("/reset", tags=["Session"])
@@ -291,7 +292,9 @@ async def get_all_sessions(
     request: Request,
     user: dict = Depends(get_current_user),
 ):
-    return {"sessions": list_sessions()}
+    sessions = list_sessions(user_id=user["sub"])
+    logger.info(f"📋 [main] Listing {len(sessions)} sessions for user_id={user['sub']}")
+    return {"sessions": sessions}
 
 
 @router.get("/sessions/{session_id}", tags=["Session"])
@@ -337,11 +340,10 @@ async def health():
 async def warmup():
     """Warms up the engine by triggering lazy-loaded models."""
     try:
-        # Trigger STT/TTS if possible or just log
-        logger.info("🔥 Warmup triggered...")
-        # We can also call llm_engine if we want to force load
+        await llm_engine.warmup()
         return {"status": "warmed_up"}
     except Exception as e:
+        logger.error(f"[main] Warmup failed: {e}")
         return {"status": "error", "detail": str(e)}
 
 

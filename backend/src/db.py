@@ -42,10 +42,19 @@ async def init_db() -> None:
     """Run once at startup. Safe to call repeatedly (IF NOT EXISTS guards)."""
     conn = await _connect()
     try:
+        # Migration: Add user_id column if it doesn't exist
+        try:
+            await conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+            await conn.commit()
+            logger.info("[db] Added user_id column to sessions table.")
+        except Exception:
+            pass # Column already exists
+        
         await conn.executescript("""
             -- Existing tables (kept intact)
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id  TEXT PRIMARY KEY,
+                user_id     TEXT, -- Added for history isolation
                 title       TEXT DEFAULT 'New Chat',
                 state       TEXT DEFAULT '{}',
                 turns       INTEGER DEFAULT 0,
@@ -64,6 +73,7 @@ async def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
             -- NEW: User accounts
             CREATE TABLE IF NOT EXISTS users (

@@ -24,66 +24,69 @@ logger = logging.getLogger(__name__)
 TOOLS_METADATA = [
     {
         "name": "get_crm_profile",
-        "description": "Retrieve the current user's personalized shopping profile and preferences.",
+        "description": "Fetch the current user's shopping profile (categories, logic, brands, notes). Call this when the user says they used Daraz before or asks for personalized advice.",
         "parameters": {"type": "object", "properties": {}}
     },
     {
         "name": "update_crm_profile",
-        "description": "Update the user's profile with new preferences or personal details.",
+        "description": "CRITICAL: Save/Update user info immediately when they state a preference (e.g. 'I like Nike') or personal detail (e.g. 'My name is Gordon').",
         "parameters": {
             "type": "object",
             "properties": {
-                "updates": {"type": "object", "description": "Dict of fields to update"}
+                "updates": {
+                    "type": "object", 
+                    "description": "Dict of fields. Keys: name, preferred_categories (list), liked_brands (list), disliked_brands (list), budget_range, notes."
+                }
             },
             "required": ["updates"]
         }
     },
     {
         "name": "search_products",
-        "description": "Search the local catalog for product details and prices.",
+        "description": "Search the local product catalog. Use this IMMEDIATELY when a user mentions a brand or product type.",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search term"}
+                "query": {"type": "string", "description": "Search keyword (e.g. 'Khaadi lawn', 'Mens Shoes')"}
             },
             "required": ["query"]
         }
     },
     {
         "name": "estimate_shipping",
-        "description": "Calculate shipping fees and delivery date for a city.",
+        "description": "Get shipping fee and delivery date for a city in Pakistan.",
         "parameters": {
             "type": "object",
             "properties": {
-                "city": {"type": "string"}
+                "city": {"type": "string", "description": "City name (e.g., 'Lahore', 'Faisalabad')"}
             },
             "required": ["city"]
         }
     },
     {
         "name": "compare_products",
-        "description": "Compare two products side-by-side.",
+        "description": "Compare two products side-by-side. Use EXACT titles found via search_products.",
         "parameters": {
             "type": "object",
             "properties": {
-                "product_a": {"type": "string"},
-                "product_b": {"type": "string"}
+                "product_a": {"type": "string", "description": "Full name of first product"},
+                "product_b": {"type": "string", "description": "Full name of second product"}
             },
             "required": ["product_a", "product_b"]
         }
     },
     {
         "name": "get_flash_deals",
-        "description": "List the top active flash sales and discount deals.",
+        "description": "List all active 24-hour flash sales and discounted items.",
         "parameters": {"type": "object", "properties": {}}
     },
     {
         "name": "calculate",
-        "description": "Evaluate mathematical expressions (e.g., '1500 * 2', 'sqrt(25)').",
+        "description": "Perform math (e.g. 15% discount, price sum).",
         "parameters": {
             "type": "object",
             "properties": {
-                "expression": {"type": "string"}
+                "expression": {"type": "string", "description": "Math expression (e.g. '1500 * 0.85')"}
             },
             "required": ["expression"]
         }
