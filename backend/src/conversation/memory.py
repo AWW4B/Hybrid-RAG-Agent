@@ -110,9 +110,13 @@ def init_db() -> None:
 # =============================================================================
 def save_session(session_id: str, session_data: dict) -> None:
     # BUGFIX: Do not persist empty sessions to SQLite (avoids cluttering history with 0-message chats)
-    if not session_data.get("history"):
+    history = session_data.get("history", [])
+    if not history:
+        logger.info(f"🚫 [database] Skipping save for session={session_id} (empty history)")
         return
     
+    logger.info(f"💾 [database] Saving session={session_id} with {len(history)} messages, user_id={session_data.get('user_id')}")
+
     conn = _get_connection()
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -416,8 +420,16 @@ def increment_turn(session_id: str) -> None:
 def flush_session_to_db(session_id: str) -> None:
     """Persist current Redis session state to SQLite. Call from a background thread."""
     session = _load_from_redis(session_id)
-    if session and session.get("history"):
+    if not session:
+        logger.warning(f"⚠️ [memory] Attempted to flush session={session_id} but not found in Redis.")
+        return
+
+    history = session.get("history", [])
+    if history:
+        logger.info(f"🧪 [memory] Flushing session={session_id} to DB (history size={len(history)})")
         save_session(session_id, session)
+    else:
+        logger.info(f"⏳ [memory] Skipping flush for session={session_id} (history is empty)")
 
 
 def is_session_maxed(session_id: str) -> bool:
