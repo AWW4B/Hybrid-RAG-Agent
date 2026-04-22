@@ -359,6 +359,10 @@ async def upsert_crm_profile(user_id: str, updates: dict) -> None:
 async def save_session_memory(
     session_id: str, user_id: str, messages: list, turn_count: int
 ) -> None:
+    # BUGFIX: Only persist to SQLite if there's actual conversation context
+    if not messages:
+        return
+
     now = _now()
     conn = await _connect()
     try:

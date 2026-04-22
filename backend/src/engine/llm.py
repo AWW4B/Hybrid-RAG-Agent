@@ -264,9 +264,13 @@ class VoiceEngine:
             silence_reply = "I didn't catch that — could you try again?"
             return await synthesize_speech(silence_reply, session_id), "", silence_reply
 
+        # Immediate persistence for first message awareness
+        add_message_to_chat(session_id, "user", user_text)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(_executor, flush_session_to_db, session_id)
+
         assistant_text = await _generate_text(session_id, user_text)
 
-        add_message_to_chat(session_id, "user",      user_text)
         add_message_to_chat(session_id, "assistant", assistant_text)
         increment_turn(session_id)
 
@@ -293,9 +297,14 @@ class VoiceEngine:
             }
 
         start = time.perf_counter()
+        
+        # Immediate persistence for first message awareness
+        add_message_to_chat(session_id, "user", user_message)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(_executor, flush_session_to_db, session_id)
+
         assistant_text = await _generate_text(session_id, user_message)
 
-        add_message_to_chat(session_id, "user",      user_message)
         add_message_to_chat(session_id, "assistant", assistant_text)
         increment_turn(session_id)
 
@@ -330,6 +339,11 @@ class VoiceEngine:
 
         current_prompt_text = user_message
         from src.tools.orchestrator import orchestrator
+
+        # Immediate persistence for first message awareness
+        add_message_to_chat(session_id, "user", user_message)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(_executor, flush_session_to_db, session_id)
 
         for attempt in range(recursion_limit):
             start = time.perf_counter()
@@ -427,8 +441,8 @@ class VoiceEngine:
             if yield_buffer and not hide_remaining:
                 yield {"token": yield_buffer, "done": False}
 
+            # Immediate persistence for first message awareness (already added at start of stream)
             clean_response = extract_and_strip_state(session_id, full_text)
-            add_message_to_chat(session_id, "user",      user_message)
             add_message_to_chat(session_id, "assistant", clean_response.strip())
             increment_turn(session_id)
             

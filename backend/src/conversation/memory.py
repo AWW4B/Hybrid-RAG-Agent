@@ -109,6 +109,10 @@ def init_db() -> None:
 # SESSION CRUD (legacy sync layer)
 # =============================================================================
 def save_session(session_id: str, session_data: dict) -> None:
+    # BUGFIX: Do not persist empty sessions to SQLite (avoids cluttering history with 0-message chats)
+    if not session_data.get("history"):
+        return
+    
     conn = _get_connection()
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -412,7 +416,7 @@ def increment_turn(session_id: str) -> None:
 def flush_session_to_db(session_id: str) -> None:
     """Persist current Redis session state to SQLite. Call from a background thread."""
     session = _load_from_redis(session_id)
-    if session:
+    if session and session.get("history"):
         save_session(session_id, session)
 
 

@@ -224,6 +224,15 @@ export default function LoginPage({ onLogin, error, isLoading }) {
                 <PasswordStrength password={password} />
               </div>
 
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[#c4a882] uppercase tracking-widest pl-1">Confirm Secret Key</label>
+                <input id="reg-confirm" type={showPwd ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy}
+                  className="w-full px-4 py-3 rounded-xl bg-[#1a0f00] border border-white/5 text-sm text-[#f5ede2]
+                             outline-none focus:ring-[3px] focus:ring-[#F57224]/15 disabled:opacity-50 transition-all" />
+              </div>
+
               {localErr && (
                 <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
                   className="text-[11px] font-medium text-red-500 bg-red-950/20 border border-red-900/30 rounded-xl px-4 py-3">
