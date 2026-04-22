@@ -170,7 +170,11 @@ async def websocket_chat(
 
     # Session init: bind user_id, fetch CRM block once
     session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
-    get_or_create_session(session_id, user_id=user_id)
+    session = get_or_create_session(session_id, user_id=user_id)
+    # Force immediate persistence so the session appears in history sidebar right away
+    from src.conversation.memory import flush_session_to_db
+    flush_session_to_db(session_id)
+    
     await refresh_crm_block(session_id)
 
     try:
@@ -259,6 +263,10 @@ async def chat(
     user_message = sanitize_text(body.message)
     # Bind user_id and refresh CRM context
     get_or_create_session(session_id, user_id=user["sub"])
+    # Force immediate persistence
+    from src.conversation.memory import flush_session_to_db
+    flush_session_to_db(session_id)
+    
     await refresh_crm_block(session_id)
 
     result = await llm_engine.generate(session_id=session_id, user_message=user_message)

@@ -169,12 +169,13 @@ def load_session(session_id: str) -> Optional[dict]:
             "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
             (session_id,),
         ).fetchall()
+        row_dict = dict(row)
         return {
             "history":     [{"role": m["role"], "content": m["content"]} for m in messages],
-            "state":       json.loads(row["state"]) if row["state"] else {},
-            "turns":       row["turns"],
-            "status":      row["status"],
-            "user_id":     row.get("user_id"),
+            "state":       json.loads(row_dict["state"]) if row_dict["state"] else {},
+            "turns":       row_dict["turns"],
+            "status":      row_dict["status"],
+            "user_id":     row_dict.get("user_id"),
             "turn_count":  0,
             "crm_dirty":   False,
         }
