@@ -15,6 +15,7 @@ export default function useAuth() {
   const [isLoading,  setIsLoading]  = useState(false)
   const [token,      setToken]      = useState(null)   // raw JWT for WS query param
   const [isAdmin,    setIsAdmin]    = useState(false)  // decoded from JWT payload
+  const [user,       setUser]       = useState(null)   // { username, name }
 
   // Decode admin flag from JWT without verifying signature (server always verifies)
   const _decodeAdmin = (jwt) => {
@@ -33,6 +34,7 @@ export default function useAuth() {
         if (cancelled) return
         const jwt = data?.access_token || null
         setToken(jwt)
+        setUser({ username: data?.username, name: data?.name })
         if (jwt) sessionStorage.setItem('auth_token', jwt)
         setIsAdmin(jwt ? _decodeAdmin(jwt) : false)
         setAuthState('authenticated')
@@ -57,6 +59,7 @@ export default function useAuth() {
       // data.access_token is also returned in the response body
       const jwt = data?.access_token || null
       setToken(jwt)
+      setUser({ username: data?.username, name: data?.name })
       if (jwt) sessionStorage.setItem('auth_token', jwt)
       setIsAdmin(jwt ? _decodeAdmin(jwt) : false)
       setAuthState('authenticated')
@@ -74,18 +77,21 @@ export default function useAuth() {
     sessionStorage.removeItem('auth_token')
     setAuthState('unauthenticated')
     setToken(null)
+    setUser(null)
     setIsAdmin(false)
   }, [])
 
   const refresh = useCallback(async () => {
     try {
-      await refreshToken()
+      const data = await refreshToken()
+      setUser({ username: data?.username, name: data?.name })
     } catch {
       setAuthState('unauthenticated')
       setToken(null)
+      setUser(null)
       setIsAdmin(false)
     }
   }, [])
 
-  return { authState, authError, isLoading, token, isAdmin, login, logout: doLogout, refresh }
+  return { authState, authError, isLoading, token, isAdmin, user, login, logout: doLogout, refresh }
 }

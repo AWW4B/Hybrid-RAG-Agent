@@ -24,12 +24,12 @@ export default function QuickActions({ onSelect }) {
         <motion.button
           key={label}
           id={`quick-${label.toLowerCase()}`}
-          whileHover={{ scale: 1.05 }}
+          whileHover={{ scale: 1.05, backgroundColor: 'rgba(245, 114, 36, 0.1)' }}
           whileTap={{ scale: 0.95 }}
           onClick={() => onSelect(`${emoji} ${label}`)}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium
-                     border border-gray-200 bg-white text-gray-600 shadow-sm
-                     hover:border-[#F57224] hover:text-[#F57224] transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold
+                     border border-[#ff8c42]/20 bg-[#2a1a08] text-[#c4a882] 
+                     hover:border-[#F57224] hover:text-[#f5ede2] transition-all uppercase tracking-widest font-mono"
         >
           <span>{emoji}</span>
           <span>{label}</span>

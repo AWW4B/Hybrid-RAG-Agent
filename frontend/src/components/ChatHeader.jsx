@@ -23,63 +23,74 @@ function IconBtn({ id, title, onClick, children }) {
 
 export default function ChatHeader({
   onReset, onMinimize, onClose, onToggleHistory,
-  turnsUsed, turnsMax, status, isPlaying, backendStatus
+  turnsUsed, turnsMax, status, isPlaying, backendStatus, user
 }) {
+  const displayName = user?.name || user?.username || ''
+
   return (
-    <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[#F57224] to-[#ff8c42] rounded-t-2xl flex-shrink-0">
-      {/* Avatar */}
-      <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
-        <ShoppingBag size={20} className="text-white" />
+    <div className="flex items-center gap-4 px-6 py-4 bg-[#1a0f00] border-b border-white/5 flex-shrink-0 z-10 shadow-[0_4px_20px_rgba(245,114,36,0.06)]">
+      {/* Brand Monogram */}
+      <div className="flex items-center gap-2 group cursor-pointer">
+        <div className="w-8 h-8 rounded-lg bg-[#F57224] flex items-center justify-center flex-shrink-0 shadow-lg shadow-orange-900/10">
+          <ShoppingBag size={16} className="text-[#1a0f00]" />
+        </div>
+        <span className="font-serif italic text-lg text-[#f5ede2] font-semibold tracking-tight">
+          Assistant
+        </span>
       </div>
 
-      {/* Title + status */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-white font-semibold text-sm truncate">Daraz Assistant</span>
-          {/* Online indicator */}
-          <div className="relative flex-shrink-0 flex items-center gap-1.5 ml-1">
-            <span className={`w-2.5 h-2.5 rounded-full ${backendStatus === 'online' ? 'bg-green-400' : backendStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400'}`} />
-            <span className="text-[10px] text-white/90 capitalize font-medium">{backendStatus === 'online' ? 'Backend Online' : backendStatus === 'offline' ? 'Backend Offline' : 'Connecting...'}</span>
-          </div>
-          {/* Playing waveform */}
-          {isPlaying && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-shrink-0">
-              <AudioWaveform bars={4} color="white" className="h-3" />
-            </motion.div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-orange-100 text-[10px]">
-            {status === 'ended' ? '🔴 Session ended' : '🟢 Online'}
+      <div className="flex-1" />
+
+      {/* User Chip — dynamically showing user name if available */}
+      {displayName && (
+        <motion.div 
+          initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}
+          whileHover={{ scale: 1.02 }}
+          className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-full"
+        >
+          <div className="w-1.5 h-1.5 rounded-full bg-[#ff8c42] animate-pulse" />
+          <span className="text-[9px] font-bold text-[#c4a882] tracking-[0.2em] font-mono uppercase">
+            {displayName}
           </span>
-          {turnsMax > 0 && (
-            <span className="text-orange-200 text-[10px] bg-white/15 px-1.5 py-0.5 rounded-full">
-              {turnsUsed}/{turnsMax} turns
-            </span>
-          )}
+        </motion.div>
+      )}
+
+      {/* Backend Status / Identity */}
+      <div className="flex items-center gap-4 ml-2">
+        {isPlaying && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-shrink-0">
+            <AudioWaveform bars={4} color="var(--brand-fire)" className="h-4" />
+          </motion.div>
+        )}
+        
+        <div className="flex items-center gap-2">
+           <div className={`w-2 h-2 rounded-full ${backendStatus === 'online' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500'}`} />
+           <span className="text-[10px] uppercase tracking-widest font-bold text-[#c4a882]">
+             {backendStatus}
+           </span>
         </div>
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center gap-0.5 flex-shrink-0">
+      <div className="flex items-center gap-1 flex-shrink-0 ml-4">
         {onToggleHistory && (
-          <IconBtn id="btn-history" title="Chat history" onClick={onToggleHistory}>
-            <History size={16} />
+          <IconBtn id="btn-history" title="Merchant Ledger" onClick={onToggleHistory}>
+            <History size={18} className="text-[#c4a882] hover:text-[#F57224] transition-colors" />
           </IconBtn>
         )}
         {onReset && (
-          <IconBtn id="btn-new-chat" title="New chat" onClick={onReset}>
-            <RotateCcw size={16} />
+          <IconBtn id="btn-new-chat" title="Renew Bargain" onClick={onReset}>
+            <RotateCcw size={18} className="text-[#c4a882] hover:text-[#F57224] transition-colors" />
           </IconBtn>
         )}
         {onMinimize && (
-          <IconBtn id="btn-minimize" title="Minimize" onClick={onMinimize}>
-            <Minus size={16} />
+          <IconBtn id="btn-minimize" title="Conceal" onClick={onMinimize}>
+            <Minus size={18} className="text-[#c4a882] hover:text-[#f5ede2] transition-colors" />
           </IconBtn>
         )}
         {onClose && (
-          <IconBtn id="btn-close" title="Close" onClick={onClose}>
-            <X size={16} />
+          <IconBtn id="btn-close" title="Dismiss" onClick={onClose}>
+            <X size={18} className="text-red-900/60 hover:text-red-500 transition-colors" />
           </IconBtn>
         )}
       </div>

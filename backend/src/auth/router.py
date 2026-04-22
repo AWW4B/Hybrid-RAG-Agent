@@ -162,8 +162,17 @@ async def login(request: Request, response: Response, body: LoginRequest):
         samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
+    # Fetch CRM profile name for UI
+    profile = await db.get_crm_profile(user["id"])
+    name = profile.get("name") if profile else user["username"]
+
     logger.info(f"[auth] Login successful: {body.username}")
-    return {"access_token": token, "token_type": "bearer", "username": user["username"]}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": user["username"],
+        "name": name
+    }
 
 
 @auth_router.post("/logout")
@@ -187,4 +196,13 @@ async def refresh_token(request: Request, response: Response, user: dict = Depen
         httponly=True, secure=_secure, samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
-    return {"access_token": token, "message": "Token refreshed."}
+    # Fetch CRM profile name for UI
+    profile = await db.get_crm_profile(user["sub"])
+    name = profile.get("name") if profile else user["username"]
+
+    return {
+        "access_token": token,
+        "message": "Token refreshed.",
+        "username": user["username"],
+        "name": name
+    }

@@ -35,15 +35,15 @@ async function adminFetch(path, options = {}) {
 // ---------------------------------------------------------------------------
 function StatCard({ icon: Icon, label, value, color = '#F57224', sub }) {
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 flex items-center gap-4">
-      <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-        style={{ background: `${color}18` }}>
-        <Icon size={20} style={{ color }} />
+    <div className="bg-[#1e1005]/60 backdrop-blur-xl rounded-2xl border border-white/5 p-6 flex items-center gap-5 glass-shadow">
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0"
+        style={{ background: `${color}15`, border: `1px solid ${color}30` }}>
+        <Icon size={22} style={{ color }} />
       </div>
       <div>
-        <p className="text-2xl font-bold text-gray-800">{value ?? '—'}</p>
-        <p className="text-xs text-gray-500">{label}</p>
-        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+        <p className="text-3xl font-bold text-[#f5ede2] tracking-tighter">{value ?? '—'}</p>
+        <p className="text-[10px] font-bold text-[#c4a882] uppercase tracking-widest">{label}</p>
+        {sub && <p className="text-[10px] text-[#c4a882]/40 font-mono mt-1">{sub}</p>}
       </div>
     </div>
   )
@@ -51,12 +51,12 @@ function StatCard({ icon: Icon, label, value, color = '#F57224', sub }) {
 
 function SectionHeader({ title, onRefresh, refreshing }) {
   return (
-    <div className="flex items-center justify-between mb-3">
-      <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">{title}</h2>
+    <div className="flex items-center justify-between mb-4 mt-2">
+      <h2 className="text-[10px] font-bold text-[#c4a882] uppercase tracking-[0.3em] font-mono">{title}</h2>
       {onRefresh && (
         <button onClick={onRefresh} disabled={refreshing}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-[#F57224] transition disabled:opacity-50">
-          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Refresh
+          className="flex items-center gap-2 text-[10px] font-bold text-[#F57224] hover:text-[#ff8c42] transition disabled:opacity-50 uppercase tracking-widest">
+          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? 'Refreshing...' : 'Refresh Ledger'}
         </button>
       )}
     </div>
@@ -70,30 +70,30 @@ function LogConsole({ logs, onClear }) {
   }, [logs])
 
   return (
-    <div className="bg-gray-900 rounded-xl overflow-hidden mb-6 border border-gray-800 shadow-lg">
-      <div className="bg-gray-800 px-3 py-1.5 flex items-center justify-between border-b border-gray-700">
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/80" />
+    <div className="bg-[#0e0800] rounded-2xl overflow-hidden mb-8 border border-white/5 glass-shadow">
+      <div className="bg-[#1e1005] px-5 py-3 flex items-center justify-between border-b border-white/5">
+        <div className="flex items-center gap-3">
+          <div className="flex gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
           </div>
-          <span className="text-[10px] text-gray-400 font-mono uppercase tracking-tighter ml-2">Live Engine Logs</span>
+          <span className="text-[10px] text-[#c4a882] font-mono uppercase tracking-[0.2em] ml-2">Engine Output Console</span>
         </div>
         {onClear && (
-          <button onClick={onClear} className="text-[10px] text-gray-500 hover:text-white transition uppercase font-bold">Clear</button>
+          <button onClick={onClear} className="text-[10px] text-[#c4a882]/40 hover:text-[#f5ede2] transition uppercase font-bold tracking-widest">Clear</button>
         )}
       </div>
-      <div ref={scrollRef} className="p-4 h-48 overflow-y-auto font-mono text-[11px] leading-relaxed scrollbar-hide">
+      <div ref={scrollRef} className="p-6 h-56 overflow-y-auto font-mono text-[11px] leading-relaxed custom-scrollbar bg-[#0e0800]/50">
         {logs.map((L, i) => (
-          <div key={i} className="mb-1 flex gap-3">
-            <span className="text-gray-600 shrink-0">[{new Date(L.time).toLocaleTimeString()}]</span>
-            <span className={L.level === 'error' ? 'text-red-400' : L.level === 'warn' ? 'text-yellow-400' : 'text-green-400/90'}>
+          <div key={i} className="mb-1.5 flex gap-4">
+            <span className="text-[#c4a882]/30 shrink-0">[{new Date(L.time).toLocaleTimeString()}]</span>
+            <span className={L.level === 'error' ? 'text-red-400' : L.level === 'warn' ? 'text-yellow-400' : 'text-[#c4a882]'}>
               {L.message}
             </span>
           </div>
         ))}
-        {logs.length === 0 && <p className="text-gray-700 italic">No logs yet. Run a benchmark to see activity…</p>}
+        {logs.length === 0 && <p className="text-[#c4a882]/20 italic py-4 text-center">No active signals from the engine...</p>}
       </div>
     </div>
   )
@@ -117,38 +117,45 @@ function SessionsPanel() {
 
   return (
     <section>
-      <SectionHeader title="Live Sessions" onRefresh={load} refreshing={loading} />
+      <SectionHeader title="Active Consultation Ledgers" onRefresh={load} refreshing={loading} />
       {!data ? (
-        <p className="text-xs text-gray-400">Loading…</p>
+        <div className="h-40 flex items-center justify-center text-[#c4a882]/40 animate-pulse text-xs uppercase tracking-widest">Loading records...</div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-100">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50 text-gray-500 uppercase">
+        <div className="overflow-x-auto rounded-[2rem] border border-white/5 bg-[#1e1005]/40 backdrop-blur-md px-4 py-2">
+          <table className="admin-table text-[11px] font-mono">
+            <thead className="text-[#c4a882]/40 uppercase tracking-widest">
               <tr>
-                {['Session ID', 'User', 'Turns', 'Tokens', 'Context %', 'Status'].map(h => (
-                  <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>
+                {['Session ID', 'Identity', 'Turns', 'Tokens', 'Context Bloom', 'State'].map(h => (
+                  <th key={h} className="px-4 py-4 text-left font-bold">{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="text-[#f5ede2]">
               {data.sessions.map((s) => (
-                <tr key={s.session_id} className="hover:bg-gray-50 transition">
-                  <td className="px-3 py-2 font-mono text-gray-600">{s.session_id.slice(0, 8)}…</td>
-                  <td className="px-3 py-2 text-gray-500">{s.user_id?.slice(0, 8) ?? 'anon'}</td>
-                  <td className="px-3 py-2">{s.turns}</td>
-                  <td className="px-3 py-2">{s.token_estimate}</td>
-                  <td className="px-3 py-2">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold
-                      ${s.near_limit ? 'bg-yellow-50 text-yellow-700' : 'bg-green-50 text-green-700'}`}>
-                      {s.near_limit && <AlertTriangle size={10} />}
-                      {s.context_pct}%
+                <tr key={s.session_id}>
+                  <td className="font-bold text-[#F57224]">{s.session_id.slice(0, 12)}...</td>
+                  <td className="text-[#c4a882]">{s.user_id?.slice(0, 8) ?? 'ANONYM'}</td>
+                  <td>{s.turns}</td>
+                  <td>{s.token_estimate} <span className="opacity-30">tk</span></td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+                        <div className="h-full bg-[#F57224]" style={{ width: `${s.context_pct}%` }} />
+                      </div>
+                      <span className={`text-[10px] font-bold ${s.near_limit ? 'text-red-400' : 'text-[#c4a882]'}`}>
+                        {s.context_pct}%
+                      </span>
+                    </div>
+                  </td>
+                  <td className="capitalize">
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter ${s.status === 'active' ? 'bg-green-500/10 text-green-400' : 'bg-white/5 text-[#c4a882]'}`}>
+                       {s.status}
                     </span>
                   </td>
-                  <td className="px-3 py-2 capitalize text-gray-500">{s.status}</td>
                 </tr>
               ))}
               {data.sessions.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No active sessions</td></tr>
+                <tr><td colSpan={6} className="px-3 py-12 text-center text-[#c4a882]/30 italic uppercase tracking-widest">No active bargaining records found.</td></tr>
               )}
             </tbody>
           </table>
@@ -176,28 +183,31 @@ function CompactionPanel() {
 
   return (
     <section>
-      <SectionHeader title="Memory Health (Last 24h)" onRefresh={load} refreshing={loading} />
+      <SectionHeader title="Memory Bloom Resilience (24h)" onRefresh={load} refreshing={loading} />
       {!stats ? (
-        <p className="text-xs text-gray-400">Loading…</p>
+        <div className="h-40 flex items-center justify-center text-[#c4a882]/40 animate-pulse text-xs uppercase tracking-widest">Recalling artifacts...</div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {['auto', 'micro', 'extraction'].map((type) => {
             const s = stats.stats?.[type]
             return (
-              <div key={type} className="bg-white rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold text-gray-500 uppercase mb-2 capitalize">{type}</p>
+              <div key={type} className="bg-[#1e1005]/60 backdrop-blur-xl rounded-2xl border border-white/5 p-6 glass-shadow">
+                <p className="text-[10px] font-bold text-[#c4a882] uppercase tracking-[0.2em] mb-4">{type} refinement</p>
                 {s ? (
                   <>
-                    <p className="text-xl font-bold text-gray-800">{s.count}</p>
-                    <p className="text-xs text-gray-400">events</p>
+                    <p className="text-4xl font-bold text-[#F57224] tracking-tighter">{s.count}</p>
+                    <p className="text-[10px] font-bold text-[#c4a882]/40 uppercase tracking-widest mt-1">successful cycles</p>
                     {s.avg_before && (
-                      <p className="text-xs text-gray-400 mt-1">
-                        {Math.round(s.avg_before)} → {Math.round(s.avg_after)} tokens avg
-                      </p>
+                      <div className="mt-4 pt-4 border-t border-white/5">
+                        <p className="text-[10px] text-[#f5ede2] font-mono leading-relaxed">
+                          <span className="text-[#c4a882]">REDUCTION:</span><br/>
+                          {Math.round(s.avg_before)} <span className="opacity-30">→</span> {Math.round(s.avg_after)} <span className="opacity-30 text-[9px]">TOKENS AVG</span>
+                        </p>
+                      </div>
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-gray-300">No events</p>
+                  <p className="text-sm font-bold text-[#c4a882]/20 uppercase tracking-widest mt-4">Zero Events</p>
                 )}
               </div>
             )
@@ -558,30 +568,43 @@ export default function AdminDashboard({ onClose }) {
   const [tab, setTab] = useState('sessions')
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#0e0800] text-[#f5ede2]">
+      {/* Decorative background glow */}
+      <div className="fixed inset-0 pointer-events-none z-0">
+        <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#F57224]/5 blur-[120px] rounded-full" />
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-[#ff8c42]/5 blur-[100px] rounded-full" />
+      </div>
+
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 shadow-sm sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-4">
-          <BarChart2 size={20} className="text-[#F57224]" />
-          <span className="font-bold text-gray-800">Admin Dashboard</span>
+      <header className="bg-[#1e1005]/80 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 shadow-2xl">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center gap-5">
+          <div className="w-10 h-10 rounded-xl bg-[#F57224] flex items-center justify-center shadow-lg shadow-orange-900/20">
+            <BarChart2 size={22} className="text-[#1a0f00]" />
+          </div>
+          <div>
+            <h1 className="font-serif italic text-xl font-bold tracking-tight">Merchant Control</h1>
+            <p className="text-[9px] font-bold text-[#c4a882] uppercase tracking-[0.3em] font-mono leading-none mt-1">Administrative Sanctum</p>
+          </div>
           <div className="flex-1" />
           {onClose && (
-            <button onClick={onClose}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-gray-800
-                         rounded-lg hover:bg-gray-100 transition">
-              <X size={14} /> Exit Admin
-            </button>
+            <motion.button 
+              whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+              onClick={onClose}
+              className="flex items-center gap-2 px-4 py-2 text-[10px] font-bold text-[#c4a882] hover:text-[#f5ede2]
+                         rounded-full bg-white/5 border border-white/10 transition uppercase tracking-widest">
+              <X size={14} /> Leave Sanctum
+            </motion.button>
           )}
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="max-w-6xl mx-auto px-6 py-10 relative z-10">
         {/* Tab bar */}
-        <div className="flex gap-1 bg-white rounded-xl p-1 shadow-sm border border-gray-100 mb-6 w-fit">
+        <div className="flex gap-1 bg-[#1e1005]/60 backdrop-blur-xl rounded-full p-1 border border-white/5 mb-12 w-fit shadow-2xl">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button key={id} onClick={() => setTab(id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition
-                ${tab === id ? 'bg-[#F57224] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all
+                ${tab === id ? 'bg-[#F57224] text-[#1a0f00] shadow-xl' : 'text-[#c4a882] hover:text-[#f5ede2] hover:bg-white/5'}`}>
               <Icon size={14} /> {label}
             </button>
           ))}
@@ -590,7 +613,8 @@ export default function AdminDashboard({ onClose }) {
         {/* Panel */}
         <AnimatePresence mode="wait">
           <motion.div key={tab}
-            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            initial={{ opacity: 0, scale: 0.98, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: -10 }}
+            transition={{ duration: 0.3 }}>
             {tab === 'sessions'  && <SessionsPanel />}
             {tab === 'memory'    && <CompactionPanel />}
             {tab === 'benchmark' && <BenchmarkPanel />}

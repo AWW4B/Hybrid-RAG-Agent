@@ -95,38 +95,30 @@ export default function LoginPage({ onLogin, error, isLoading }) {
   const busy = isLoading || submitting
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 via-white to-orange-100 p-4">
-      {/* Background blobs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-32 -right-32 w-96 h-96 rounded-full opacity-10"
-          style={{ background: 'radial-gradient(circle, #F57224, transparent)' }} />
-        <div className="absolute -bottom-32 -left-32 w-96 h-96 rounded-full opacity-10"
-          style={{ background: 'radial-gradient(circle, #F57224, transparent)' }} />
-      </div>
-
+    <div className="min-h-screen flex items-center justify-center bg-[#1a0f00] p-4 relative">
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-        className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-sm bg-[#2a1a08] rounded-[2rem] shadow-2xl overflow-hidden glass-card glass-shadow"
       >
-        {/* Orange header */}
-        <div className="bg-gradient-to-r from-[#F57224] to-[#ff8c42] px-8 pt-8 pb-10 text-white text-center">
-          <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center mx-auto mb-4">
-            <ShoppingBag size={32} className="text-white" />
+        {/* Boutique Header */}
+        <div className="bg-gradient-to-br from-[#F57224] to-[#ff8c42] p-8 text-[#1a0f00] text-center">
+          <div className="w-16 h-16 rounded-2xl bg-[#1a0f00]/10 backdrop-blur-sm flex items-center justify-center mx-auto mb-4">
+            <ShoppingBag size={32} className="text-[#1a0f00]" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Daraz Assistant</h1>
-          <p className="text-sm text-orange-100 mt-1">Your AI Shopping Guide</p>
+          <h1 className="text-3xl font-serif italic italic-size-144 font-bold tracking-tight">Daraz Assistant</h1>
+          <p className="text-xs uppercase tracking-[0.2em] font-bold opacity-70 mt-1 mb-2">Haute Couture Insight</p>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex border-b border-gray-100">
+        <div className="flex border-b border-white/5 bg-[#1a0f00]/30 backdrop-blur-md">
           {['login', 'register'].map((t) => (
             <button
               key={t}
               onClick={() => { setTab(t); setLocalErr(''); setRegOk(false) }}
-              className={`flex-1 py-3 text-sm font-semibold transition-colors
-                ${tab === t ? 'text-[#F57224] border-b-2 border-[#F57224]' : 'text-gray-400 hover:text-gray-600'}`}
+              className={`flex-1 py-4 text-[10px] font-bold tracking-[0.2em] uppercase transition-all
+                ${tab === t ? 'text-[#F57224] border-b-2 border-[#F57224] bg-[#F57224]/5' : 'text-[#c4a882] hover:text-[#f5ede2]'}`}
             >
               {t === 'login' ? 'Sign In' : 'Register'}
             </button>
@@ -138,32 +130,32 @@ export default function LoginPage({ onLogin, error, isLoading }) {
           {tab === 'login' ? (
             <motion.form
               key="login"
-              initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
               onSubmit={handleLogin}
-              className="px-8 py-6 space-y-4"
+              className="px-8 py-8 space-y-5"
             >
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Username</label>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[#c4a882] uppercase tracking-widest pl-1">Username</label>
                 <input id="login-username" type="text" autoComplete="username"
                   value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy}
-                  placeholder="Enter your username"
-                  className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm
-                             outline-none focus:ring-2 focus:ring-[#F57224] focus:border-transparent
-                             disabled:opacity-50 transition" />
+                  placeholder="The chronicle name"
+                  className="w-full px-4 py-3 rounded-xl bg-[#1a0f00] border border-white/5 text-sm text-[#f5ede2]
+                             outline-none focus:ring-[3px] focus:ring-[#F57224]/15 focus:border-[#F57224]
+                             disabled:opacity-50 transition-all placeholder-[#c4a882]/20" />
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Password</label>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[#c4a882] uppercase tracking-widest pl-1">Secret Key</label>
                 <div className="relative">
                   <input id="login-password" type={showPwd ? 'text' : 'password'}
                     autoComplete="current-password"
                     value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy}
-                    placeholder="Enter your password"
-                    className="w-full px-4 py-3 pr-12 rounded-xl bg-gray-50 border border-gray-200 text-sm
-                               outline-none focus:ring-2 focus:ring-[#F57224] focus:border-transparent
-                               disabled:opacity-50 transition" />
+                    placeholder="The forbidden script"
+                    className="w-full px-4 py-3 pr-12 rounded-xl bg-[#1a0f00] border border-white/5 text-sm text-[#f5ede2]
+                               outline-none focus:ring-[3px] focus:ring-[#F57224]/15 focus:border-[#F57224]
+                               disabled:opacity-50 transition-all placeholder-[#c4a882]/20" />
                   <button type="button" onClick={() => setShowPwd(v => !v)} tabIndex={-1}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600">
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#c4a882] hover:text-[#F57224] transition-colors">
                     {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
@@ -171,103 +163,88 @@ export default function LoginPage({ onLogin, error, isLoading }) {
 
               {displayError && (
                 <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
-                  className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                  {displayError}
+                  className="text-[11px] font-medium text-red-500 bg-red-950/20 border border-red-900/30 rounded-xl px-4 py-3">
+                  ⚠️ {displayError}
                 </motion.p>
               )}
 
               <motion.button id="login-submit" type="submit"
                 whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} disabled={busy}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl
-                           bg-[#F57224] hover:bg-[#e0621a] text-white font-semibold text-sm
-                           shadow-md disabled:opacity-60 transition">
-                {busy ? <Loader2 size={18} className="animate-spin" /> : <><LogIn size={18} /> Sign In</>}
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl
+                           bg-gradient-to-r from-[#F57224] to-[#ff8c42] text-[#1a0f00] font-bold text-xs uppercase tracking-widest
+                           shadow-xl shadow-orange-900/20 disabled:opacity-40 transition-all mt-4">
+                {busy ? <Loader2 size={18} className="animate-spin" /> : <><LogIn size={18} /> Enter the Souk</>}
               </motion.button>
             </motion.form>
 
           ) : (
             <motion.form
               key="register"
-              initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -12 }}
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
               onSubmit={handleRegister}
-              className="px-8 py-6 space-y-4"
+              className="px-8 py-8 space-y-5"
             >
               {regOk && (
                 <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                  className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-center gap-2">
-                  <CheckCircle2 size={14} /> Account created! Switching to login…
+                  className="text-[11px] font-medium text-green-500 bg-green-950/20 border border-green-900/30 rounded-xl px-4 py-3 flex items-center gap-2">
+                  <CheckCircle2 size={14} /> Ledger Record Created.
                 </motion.p>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Username</label>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[#c4a882] uppercase tracking-widest pl-1">Handle</label>
                 <input id="reg-username" type="text" autoComplete="username"
                   value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy}
-                  placeholder="3–32 chars, letters/numbers/-/_"
-                  className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm
-                             outline-none focus:ring-2 focus:ring-[#F57224] disabled:opacity-50 transition" />
+                  className="w-full px-4 py-3 rounded-xl bg-[#1a0f00] border border-white/5 text-sm text-[#f5ede2]
+                             outline-none focus:ring-[3px] focus:ring-[#F57224]/15 disabled:opacity-50 transition-all font-sans" />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Email</label>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[#c4a882] uppercase tracking-widest pl-1">Scroll Address</label>
                 <input id="reg-email" type="email" autoComplete="email"
                   value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy}
-                  placeholder="you@example.com"
-                  className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm
-                             outline-none focus:ring-2 focus:ring-[#F57224] disabled:opacity-50 transition" />
+                  className="w-full px-4 py-3 rounded-xl bg-[#1a0f00] border border-white/5 text-sm text-[#f5ede2]
+                             outline-none focus:ring-[3px] focus:ring-[#F57224]/15 disabled:opacity-50 transition-all font-sans" />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Password</label>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[#c4a882] uppercase tracking-widest pl-1">Secret Key</label>
                 <div className="relative">
                   <input id="reg-password" type={showPwd ? 'text' : 'password'}
                     autoComplete="new-password"
                     value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy}
-                    placeholder="Min 8 chars"
-                    className="w-full px-4 py-3 pr-12 rounded-xl bg-gray-50 border border-gray-200 text-sm
-                               outline-none focus:ring-2 focus:ring-[#F57224] disabled:opacity-50 transition" />
+                    className="w-full px-4 py-3 pr-12 rounded-xl bg-[#1a0f00] border border-white/5 text-sm text-[#f5ede2]
+                               outline-none focus:ring-[3px] focus:ring-[#F57224]/15 disabled:opacity-50 transition-all" />
                   <button type="button" onClick={() => setShowPwd(v => !v)} tabIndex={-1}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600">
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#c4a882] hover:text-[#F57224] transition-colors">
                     {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
                 <PasswordStrength password={password} />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Confirm Password</label>
-                <input id="reg-confirm" type={showPwd ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy}
-                  placeholder="Repeat password"
-                  className={`w-full px-4 py-3 rounded-xl bg-gray-50 border text-sm
-                             outline-none focus:ring-2 focus:ring-[#F57224] disabled:opacity-50 transition
-                             ${confirm && confirm !== password ? 'border-red-300' : 'border-gray-200'}`} />
-                {confirm && confirm !== password && (
-                  <p className="mt-1 text-xs text-red-500">Passwords do not match.</p>
-                )}
-              </div>
-
               {localErr && (
                 <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
-                  className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                  {localErr}
+                  className="text-[11px] font-medium text-red-500 bg-red-950/20 border border-red-900/30 rounded-xl px-4 py-3">
+                  ⚠️ {localErr}
                 </motion.p>
               )}
 
               <motion.button id="register-submit" type="submit"
                 whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} disabled={busy}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl
-                           bg-[#F57224] hover:bg-[#e0621a] text-white font-semibold text-sm
-                           shadow-md disabled:opacity-60 transition">
-                {busy ? <Loader2 size={18} className="animate-spin" /> : <><UserPlus size={18} /> Create Account</>}
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl
+                           bg-gradient-to-r from-[#F57224] to-[#ff8c42] text-[#1a0f00] font-bold text-xs uppercase tracking-widest
+                           shadow-xl shadow-orange-900/20 disabled:opacity-40 transition-all mt-4">
+                {busy ? <Loader2 size={18} className="animate-spin" /> : <><UserPlus size={18} /> Inscribe Account</>}
               </motion.button>
             </motion.form>
           )}
         </AnimatePresence>
 
-        <p className="text-center text-xs text-gray-400 pb-5">Protected by JWT authentication</p>
+        <p className="text-center text-[9px] font-bold tracking-[0.2em] uppercase text-[#c4a882] opacity-30 pb-5">
+          Secured via Merchant Cryptography
+        </p>
       </motion.div>
     </div>
   )

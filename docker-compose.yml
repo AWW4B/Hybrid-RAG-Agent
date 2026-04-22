@@ -16,7 +16,7 @@
 #   redis-data  → Redis RDB snapshot persistence
 # =============================================================================
 
-version: "3.9"
+
 
 services:
 
