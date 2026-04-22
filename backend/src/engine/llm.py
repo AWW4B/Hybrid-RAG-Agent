@@ -206,7 +206,8 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
             logger.info(f"🛠️ [engine] Tool call detected on attempt {attempt+1}")
             session = get_or_create_session(session_id)
             tool_result = await orchestrator.parse_and_execute(raw_response, session["user_id"], session)
-            current_text_to_process += f"\n{tool_result}"
+            # Inject tool result as a system-like injection to guide the final answer
+            current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool execution finished. Use this data to answer the user: {tool_result}]"
             continue
         
         return extract_and_strip_state(session_id, raw_response)
@@ -395,7 +396,8 @@ class VoiceEngine:
                 logger.info(f"🛠️ [engine-stream] Tool call detected on attempt {attempt+1}")
                 session = get_or_create_session(session_id)
                 tool_result = await orchestrator.parse_and_execute(full_text, session["user_id"], session)
-                current_prompt_text += f"\n{tool_result}"
+                # Clear buffer and update prompt for final answer
+                current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool results received. Provide the final answer now: {tool_result}]"
                 continue
             
             if yield_buffer and not hide_remaining:
