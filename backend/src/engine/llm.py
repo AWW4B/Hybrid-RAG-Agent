@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 import asyncio
@@ -183,7 +184,7 @@ async def _llm_generate_non_streaming(messages: list[dict], max_tokens: int = 40
     return await loop.run_in_executor(_executor, _run_llm_sync, prompt, max_tokens)
 
 
-async def _generate_text(session_id: str, user_text: str, recursion_limit: int = 3) -> str:
+async def _generate_text(session_id: str, user_text: str, recursion_limit: int = 3) -> tuple[str, str]:
     """Stage 2: RAG retrieval + LLM generation with recursive Tool Execution Loop."""
     from src.tools.orchestrator import orchestrator
     
@@ -191,6 +192,8 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
     current_text_to_process = user_text  # BUG FIX: was undefined
     # Track conversational text across attempts to avoid losing it from history
     accumulated_assistant_text = ""
+    full_text_chain = ""
+    current_text_to_process = user_text
     
     for attempt in range(recursion_limit):
         # RAG context is mostly for the initial user query (first attempt only)
@@ -203,6 +206,7 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
 
         loop = asyncio.get_event_loop()
         raw_response = await loop.run_in_executor(_executor, _run_llm_sync, prompt, MAX_TOKENS)
+        full_text_chain += f"\n--- Attempt {attempt+1} ---\n{raw_response}"
         
         # Extract conversational text (pre-tool-call or final response)
         # If this response contains a tool call, we ignore the conversational text 
@@ -213,11 +217,19 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
             if clean_segment:
                 accumulated_assistant_text += (clean_segment + " ")
 
-        if "<TOOL_CALL>" in raw_response:
+        if "<TOOL_CALL" in raw_response:
             logger.info(f"🛠️ [engine] Tool call detected on attempt {attempt+1}")
             session = get_or_create_session(session_id)
-            tool_result = await orchestrator.parse_and_execute(raw_response, session["user_id"], session)
             
+            # Robust tag extraction: find first <TOOL_CALL and last >
+            tag_match = re.search(r"(<TOOL_CALL.*?>)", raw_response, re.IGNORECASE | re.DOTALL)
+            if tag_match:
+                tool_result = await orchestrator.parse_and_execute(tag_match.group(1), session["user_id"], session)
+            else:
+                tool_result = await orchestrator.parse_and_execute(raw_response, session["user_id"], session)
+            
+            full_text_chain += f"\n[TOOL_RESULT]: {tool_result}"
+
             # CRITICAL: Force session persistence and CRM refresh if a tool marked it dirty
             if session.get("crm_dirty"):
                 from src.conversation.memory import _save_to_redis
@@ -235,9 +247,9 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
                 current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool returned no results. Tell the user no matching products were found and suggest they try different keywords.]"
             continue
         
-        return accumulated_assistant_text.strip()
+        return accumulated_assistant_text.strip(), full_text_chain.strip()
     
-    return accumulated_assistant_text.strip() or "I'm having trouble completing that request right now."
+    return accumulated_assistant_text.strip() or "I'm having trouble completing that request right now.", full_text_chain.strip()
 
 
 # =============================================================================
@@ -287,9 +299,9 @@ class VoiceEngine:
         loop = asyncio.get_event_loop()
         loop.run_in_executor(_executor, flush_session_to_db, session_id)
 
-        assistant_text = await _generate_text(session_id, user_text)
+        assistant_text, raw_thinking = await _generate_text(session_id, user_text)
 
-        add_message_to_chat(session_id, "assistant", assistant_text)
+        add_message_to_chat(session_id, "assistant", assistant_text, raw_thinking=raw_thinking)
         increment_turn(session_id)
 
         if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
@@ -321,9 +333,9 @@ class VoiceEngine:
         loop = asyncio.get_event_loop()
         loop.run_in_executor(_executor, flush_session_to_db, session_id)
 
-        assistant_text = await _generate_text(session_id, user_message)
+        assistant_text, raw_thinking = await _generate_text(session_id, user_message)
 
-        add_message_to_chat(session_id, "assistant", assistant_text)
+        add_message_to_chat(session_id, "assistant", assistant_text, raw_thinking=raw_thinking)
         increment_turn(session_id)
 
         if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
@@ -365,6 +377,7 @@ class VoiceEngine:
 
         # Track conversational text across attempts to avoid losing it from history
         accumulated_assistant_text = ""
+        full_text_chain = ""
 
         for attempt in range(recursion_limit):
             start = time.perf_counter()
@@ -414,7 +427,9 @@ class VoiceEngine:
                 token = item["choices"][0]["text"]
                 full_text += token
 
-                if "<TOOL_CALL>" in full_text and not is_tool_call:
+                # If we detect a tool call anywhere in the response, we immediately
+                # stop yielding any conversational text from this attempt.
+                if "<TOOL_CALL" in full_text:
                     is_tool_call = True
                 
                 if is_tool_call:
@@ -423,9 +438,21 @@ class VoiceEngine:
                 if hide_remaining: continue
                 yield_buffer += token
 
-                if "<STATE>" in yield_buffer:
+                # Safeguard Buffer: Do not yield the first 250 characters of an attempt 
+                # until we are sure they don't contain a hidden tool call.
+                # This ensures that even if the model is verbose, the user only sees
+                # the final answer, not the intermediate "I'm searching..." filler.
+                if len(full_text) < 250 and "<TOOL_CALL" not in full_text:
+                    # Just keep buffering in yield_buffer
+                    continue
+
+                # Detect state tags to hide the remainder of the response
+                lower_buffer = yield_buffer.lower()
+                if "<state>" in lower_buffer:
                     hide_remaining = True
-                    valid_text, _ = yield_buffer.split("<STATE>", 1)
+                    # Split at the first occurrence (case-insensitive)
+                    idx = lower_buffer.find("<state>")
+                    valid_text = yield_buffer[:idx]
                     if valid_text: yield {"token": valid_text, "done": False}
                     yield_buffer = ""
                     continue
@@ -444,6 +471,8 @@ class VoiceEngine:
                 if safe_to_yield:
                     yield {"token": safe_to_yield, "done": False}
 
+            full_text_chain += f"\n--- Attempt {attempt+1} ---\n{full_text}"
+
             # Capture the clean conversational segment from this attempt
             # If this response contains a tool call, we ignore the conversational text 
             # from this attempt to avoid "I am a shopping assistant" filler or refusals 
@@ -456,8 +485,16 @@ class VoiceEngine:
             if is_tool_call:
                 logger.info(f"🛠️ [engine-stream] Tool call detected on attempt {attempt+1}")
                 session = get_or_create_session(session_id)
-                tool_result = await orchestrator.parse_and_execute(full_text, session["user_id"], session)
                 
+                # Robust tag extraction
+                tag_match = re.search(r"(<TOOL_CALL.*?>)", full_text, re.IGNORECASE | re.DOTALL)
+                if tag_match:
+                    tool_result = await orchestrator.parse_and_execute(tag_match.group(1), session["user_id"], session)
+                else:
+                    tool_result = await orchestrator.parse_and_execute(full_text, session["user_id"], session)
+                
+                full_text_chain += f"\n[TOOL_RESULT]: {tool_result}"
+
                 # CRITICAL: Force session persistence and CRM refresh if a tool marked it dirty
                 if session.get("crm_dirty"):
                     from src.conversation.memory import _save_to_redis
@@ -479,7 +516,7 @@ class VoiceEngine:
                 yield {"token": yield_buffer, "done": False}
 
             # Final persistence using the accumulated text across all attempts
-            add_message_to_chat(session_id, "assistant", accumulated_assistant_text.strip())
+            add_message_to_chat(session_id, "assistant", accumulated_assistant_text.strip(), raw_thinking=full_text_chain.strip())
             increment_turn(session_id)
             
             if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):

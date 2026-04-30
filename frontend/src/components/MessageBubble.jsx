@@ -1,10 +1,6 @@
-// =============================================================================
-// src/components/MessageBubble.jsx
-// Single message row — user (right, orange) or bot (left, white)
-// Supports streaming cursor, voice messages, error/cancelled states
-// =============================================================================
-import { Volume2 } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { Volume2, Brain } from 'lucide-react'
+import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import AudioWaveform from './AudioWaveform.jsx'
 
 function formatTime(iso) {
@@ -13,7 +9,8 @@ function formatTime(iso) {
 }
 
 export default function MessageBubble({ message, isPlaying, onStopSpeaking }) {
-  const { role, content, timestamp, streaming, isError, cancelled, latency_ms, isVoice } = message
+  const { role, content, raw_thinking, timestamp, streaming, isError, cancelled, latency_ms, isVoice } = message
+  const [showThought, setShowThought] = useState(false)
   const isUser = role === 'user'
 
   const hasProducts = content.includes('[PRODUCT')
@@ -55,6 +52,28 @@ export default function MessageBubble({ message, isPlaying, onStopSpeaking }) {
           )}
         </div>
 
+        {/* --- Thought Drawer (Thinking Process) --- */}
+        <AnimatePresence>
+          {!isUser && raw_thinking && showThought && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="w-full overflow-hidden"
+            >
+              <div className="bg-[#140a02]/80 border border-[#F57224]/20 rounded-2xl p-4 my-1
+                            text-[11px] font-mono leading-relaxed text-[#c4a882]/80 glass-shadow">
+                <div className="flex items-center gap-2 mb-2 text-[#F57224]/60 uppercase tracking-widest font-black text-[9px]">
+                  <Brain size={10} /> Internal Process
+                </div>
+                <div className="whitespace-pre-wrap break-words italic">
+                  {raw_thinking}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {!isUser && products.length > 0 && (
           <div className="flex gap-4 overflow-x-auto w-full py-4 px-2 no-scrollbar">
             {products.map((p, idx) => (
@@ -90,15 +109,32 @@ export default function MessageBubble({ message, isPlaying, onStopSpeaking }) {
           </span>
 
           {!isUser && !streaming && !isError && (
-            <motion.div 
-               whileHover={{ scale: 1.05 }}
-               className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#3d2a14] border border-white/5"
-            >
-              <Volume2 size={10} className="text-[#F57224]" />
-              <span className="text-[9px] font-bold text-[#c4a882] uppercase tracking-widest">
-                {isPlaying ? 'Speaking' : 'Vocalized'}
-              </span>
-            </motion.div>
+            <div className="flex items-center gap-2">
+              {raw_thinking && (
+                <motion.button 
+                   whileHover={{ scale: 1.05, backgroundColor: 'rgba(245, 114, 36, 0.1)' }}
+                   whileTap={{ scale: 0.95 }}
+                   onClick={() => setShowThought(!showThought)}
+                   className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-colors
+                              ${showThought ? 'bg-[#F57224]/20 border-[#F57224]/40 text-[#F57224]' : 'bg-[#3d2a14] border-white/5 text-[#c4a882]'}`}
+                >
+                  <Brain size={10} />
+                  <span className="text-[9px] font-bold uppercase tracking-widest">
+                    {showThought ? 'Hide Thought' : 'View Thought'}
+                  </span>
+                </motion.button>
+              )}
+
+              <motion.div 
+                 whileHover={{ scale: 1.05 }}
+                 className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#3d2a14] border border-white/5"
+              >
+                <Volume2 size={10} className="text-[#F57224]" />
+                <span className="text-[9px] font-bold text-[#c4a882] uppercase tracking-widest">
+                  {isPlaying ? 'Speaking' : 'Vocalized'}
+                </span>
+              </motion.div>
+            </div>
           )}
         </div>
       </div>

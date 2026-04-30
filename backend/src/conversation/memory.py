@@ -371,10 +371,13 @@ def get_or_create_session(session_id: str, user_id: Optional[str] = None) -> dic
     return session
 
 
-def add_message_to_chat(session_id: str, role: str, text: str) -> None:
+def add_message_to_chat(session_id: str, role: str, text: str, raw_thinking: Optional[str] = None) -> None:
     """Hot path: append message and write to Redis only. SQLite is flushed in background."""
     session = get_or_create_session(session_id)
-    session["history"].append({"role": role, "content": text})
+    msg = {"role": role, "content": text}
+    if raw_thinking:
+        msg["raw_thinking"] = raw_thinking
+    session["history"].append(msg)
     _save_to_redis(session_id, session)
     # SQLite write deferred — call flush_session_to_db() in a background task
 
@@ -586,8 +589,17 @@ def extract_and_strip_state(session_id: str, raw_response: str) -> str:
     if match:
         _update_state_from_block(session["state"], match.group(1))
         _save_to_redis(session_id, session)
+    # Strip various internal tags to keep user-facing text clean
     clean = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
-    clean = _STATE_PATTERN.sub("", clean).strip()
+    clean = re.sub(r"<TOOL_CALL>.*?</TOOL_CALL>", "", clean, flags=re.DOTALL).strip()
+    
+    # Aggressively strip any variation of the STATE tag
+    clean = re.sub(r"<STATE>.*?</STATE>", "", clean, flags=re.DOTALL | re.IGNORECASE)
+    clean = re.sub(r"<STATE>.*$", "", clean, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Final cleanup of any stray or malformed tags
+    clean = re.sub(r"<TOOL_CALL.*?>", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"<STATE.*?>", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"Resolved\s*:\s*(yes|no)", "", clean, flags=re.IGNORECASE).strip()
     return clean
 
