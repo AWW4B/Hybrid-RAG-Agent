@@ -531,9 +531,20 @@ def build_inference_payload(
     from src.tools.orchestrator import orchestrator
     tools_prompt = orchestrator.get_tools_prompt()
 
+    # Detect if this prompt already carries tool results (2nd+ iteration after a tool call)
+    has_tool_results = (
+        "[SYSTEM: Tool results received" in new_user_message or
+        "[SYSTEM: Tool returned no results" in new_user_message
+    )
+
     system_msg = {
         "role":    "system",
-        "content": crm_block + build_system_prompt(session["state"], rag_context=rag_context, tools_prompt=tools_prompt),
+        "content": crm_block + build_system_prompt(
+            session["state"],
+            rag_context=rag_context,
+            tools_prompt=tools_prompt,
+            has_tool_results=has_tool_results,
+        ),
     }
 
     # Token-budget-aware trim: keep the most recent messages that fit
@@ -542,7 +553,7 @@ def build_inference_payload(
     # [Diagnostic] Verify identity and CRM presence in logs
     user_id = session.get("user_id")
     crm_len = len(crm_block) if crm_block else 0
-    logger.info(f"🧠 [engine] Context Ready: user_id={user_id}, session={session_id}, crm_chars={crm_len}")
+    logger.info(f"🧠 [engine] Context Ready: user_id={user_id}, session={session_id}, crm_chars={crm_len}, has_tool_results={has_tool_results}")
 
     return [system_msg] + trimmed + [{"role": "user", "content": new_user_message}]
 
@@ -555,6 +566,7 @@ async def refresh_crm_block(session_id: str) -> None:
     session = get_or_create_session(session_id)
     user_id = session.get("user_id")
     if not user_id:
+        logger.warning(f"[memory] refresh_crm_block skipped — no user_id for session={session_id}")
         return
     try:
         from src.tools.crm import get_profile, build_crm_context_block
@@ -563,6 +575,7 @@ async def refresh_crm_block(session_id: str) -> None:
         session["_cached_crm_block"] = crm_block
         session["crm_dirty"] = False
         _save_to_redis(session_id, session)
+        logger.info(f"[memory] CRM block refreshed for user_id={user_id}: profile_keys={list(profile.keys()) if profile else 'None'}, block_len={len(crm_block)}")
     except Exception as e:
         logger.warning(f"[memory] refresh_crm_block failed for {session_id}: {e}")
 

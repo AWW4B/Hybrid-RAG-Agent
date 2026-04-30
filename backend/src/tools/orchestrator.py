@@ -23,11 +23,6 @@ logger = logging.getLogger(__name__)
 # Metadata registry for LLM prompt injection
 TOOLS_METADATA = [
     {
-        "name": "get_crm_profile",
-        "description": "Fetch the current user's shopping profile (categories, logic, brands, notes). Call this when the user says they used Daraz before or asks for personalized advice.",
-        "parameters": {"type": "object", "properties": {}}
-    },
-    {
         "name": "update_crm_profile",
         "description": "CRITICAL: Save/Update user info immediately when they state a preference (e.g. 'I like Nike') or personal detail (e.g. 'My name is Gordon').",
         "parameters": {
@@ -82,7 +77,7 @@ TOOLS_METADATA = [
     },
     {
         "name": "calculate",
-        "description": "Perform math (e.g. 15% discount, price sum).",
+        "description": "Perform SHOPPING-RELATED math only (e.g. price with discount, tax calculation, total for multiple items). Do NOT use for general math.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -96,7 +91,6 @@ TOOLS_METADATA = [
 class ToolOrchestrator:
     def __init__(self):
         self.tools = {
-            "get_crm_profile": handle_crm_tool,
             "update_crm_profile": handle_crm_tool,
             "search_products": search_products,
             "estimate_shipping": estimate_shipping,
@@ -108,7 +102,8 @@ class ToolOrchestrator:
     def get_tools_prompt(self) -> str:
         """Returns the system prompt block for tool usage."""
         prompt = "\n## Available Tools\n"
-        prompt += "If you need real-time info, call a tool using: <TOOL_CALL>{\"name\": \"tool_name\", \"parameters\": {...}}</TOOL_CALL>\n\n"
+        prompt += "To use a tool, you MUST output EXACTLY this JSON format and nothing else:\n"
+        prompt += "<TOOL_CALL>{\"name\": \"tool_name\", \"parameters\": {\"key\": \"value\"}}</TOOL_CALL>\n\n"
         for tool in TOOLS_METADATA:
             prompt += f"- {tool['name']}: {tool['description']}\n"
         return prompt

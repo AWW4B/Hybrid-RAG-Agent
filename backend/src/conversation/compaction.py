@@ -172,37 +172,82 @@ async def auto_compact_if_needed(
 # ---------------------------------------------------------------------------
 # LAYER 4 — BACKGROUND CRM EXTRACTION (Async, Non-Blocking)
 # ---------------------------------------------------------------------------
-EXTRACTION_EVERY_N_TURNS = 4
+EXTRACTION_EVERY_N_TURNS = 1
 
 
-async def maybe_extract_to_crm(session: dict, llm_generate_fn) -> None:
+async def maybe_extract_to_crm(session: dict, llm_generate_fn, session_id: str = None) -> None:
     """
     Increment turn counter. Every N turns, fire background CRM extraction.
     Uses asyncio.create_task — never awaited from the main turn handler.
+    session_id is passed so the background task can refresh the CRM cache
+    block immediately after writing new data to the DB.
     """
     session["turn_count"] = session.get("turn_count", 0) + 1
     user_id = session.get("user_id")
     if not user_id:
         return  # Anonymous session — nothing to extract to
+
+    # CRITICAL: Persist updated turn_count back to Redis or it resets every call
+    if session_id:
+        from src.conversation.memory import _save_to_redis
+        _save_to_redis(session_id, session)
+
     if session["turn_count"] % EXTRACTION_EVERY_N_TURNS != 0:
         return
 
     # Snapshot recent messages before task runs (avoid mutation races)
     recent_snapshot = list(session.get("history", [])[-10:])
-
+    logger.info(f"[extraction] Triggering background CRM extraction for user={user_id}, turn={session['turn_count']}")
     asyncio.create_task(
-        _background_extract(user_id, recent_snapshot, llm_generate_fn)
+        _background_extract(user_id, recent_snapshot, llm_generate_fn, session_id=session_id)
     )
+
+
+def _extract_json_object(raw: str) -> dict:
+    """Extract the first valid {...} JSON object from LLM output, ignoring markdown fences and prose."""
+    import re
+    # Strip markdown fences
+    raw = re.sub(r"```(?:json)?\s*", "", raw).strip()
+    raw = re.sub(r"```\s*$", "", raw).strip()
+    # Try direct parse first
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Brace-depth matching to extract first {...}
+    start = raw.find("{")
+    if start == -1:
+        return {}
+    depth = 0
+    for i in range(start, len(raw)):
+        if raw[i] == "{":
+            depth += 1
+        elif raw[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(raw[start:i + 1])
+                except (json.JSONDecodeError, ValueError):
+                    return {}
+    return {}
+
+
+_VALID_CRM_KEYS = {"name", "preferred_categories", "budget_range", "liked_brands", "disliked_brands", "notes"}
 
 
 async def _background_extract(
     user_id: str,
     messages: list[dict],
     llm_generate_fn,
+    session_id: str = None,
 ) -> None:
     """
     Runs silently in background. ALL exceptions are caught and logged.
     Never allowed to propagate — must never crash the session.
+    After a successful update, refreshes the session's CRM cache block
+    so the next turn immediately has the updated preferences in context.
     """
     history = "\n".join(
         f"{m['role'].upper()}: {m.get('content', '')}"
@@ -220,32 +265,38 @@ async def _background_extract(
             "content": (
                 "Analyze this Daraz shopping conversation. Extract any NEW user preferences.\n"
                 "Return a JSON object with ONLY fields that are new or changed.\n"
-                "Valid fields: preferred_categories (list), budget_range (string), "
-                "liked_brands (list), disliked_brands (list), notes (string).\n"
-                "If nothing new found, return {}.\n"
-                "Return raw JSON only. No markdown. No explanation.\n\n"
+                "Valid fields: name (string), preferred_categories (list of strings), budget_range (string), "
+                "liked_brands (list of strings), disliked_brands (list of strings), notes (string).\n"
+                "If nothing new found, return exactly: {}\n"
+                "Return ONLY the raw JSON object. No markdown. No explanation.\n"
+                "Example: {\"name\": \"Ali\", \"liked_brands\": [\"Samsung\"]}\n\n"
                 f"Conversation:\n{history}"
             ),
         }
     ]
 
     try:
-        raw = await asyncio.wait_for(
-            llm_generate_fn(prompt, max_tokens=200),
-            timeout=8.0,
-        )
-        raw = raw.strip().strip("```json").strip("```").strip()
-        if not raw or raw == "{}":
+        # No timeout — extraction LLM call takes as long as it needs.
+        # This runs after the user already has their response, so latency is irrelevant.
+        raw = await llm_generate_fn(prompt, max_tokens=200)
+        logger.info(f"[extraction] Raw LLM output for {user_id}: {raw[:120]!r}")
+        updates = _extract_json_object(raw)
+        # Filter to only valid CRM keys with non-empty values
+        updates = {k: v for k, v in updates.items() if k in _VALID_CRM_KEYS and v}
+        if not updates:
+            logger.info(f"[extraction] No new CRM fields extracted for {user_id}")
             return
-        updates = json.loads(raw)
-        if updates and isinstance(updates, dict):
-            from src.tools.crm import update_profile
-            await update_profile(user_id, updates)
-            logger.info(f"[extraction] Background CRM updated for {user_id}: {list(updates.keys())}")
-    except asyncio.TimeoutError:
-        logger.warning(f"[extraction] Timed out for {user_id}")
+        from src.tools.crm import update_profile
+        await update_profile(user_id, updates)
+        logger.info(f"[extraction] ✅ Background CRM updated for {user_id}: {updates}")
+        # Immediately refresh the session's CRM cache so next turn has updated preferences
+        if session_id:
+            from src.conversation.memory import refresh_crm_block
+            await refresh_crm_block(session_id)
+            logger.info(f"[extraction] CRM block refreshed for session={session_id} after background update")
     except json.JSONDecodeError as e:
         logger.warning(f"[extraction] JSON parse failed for {user_id}: {e}")
     except Exception as e:
         logger.warning(f"[extraction] Silently failed for {user_id}: {e}")
         # Never re-raise — background task must not crash the session
+

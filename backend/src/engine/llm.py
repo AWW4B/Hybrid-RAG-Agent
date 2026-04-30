@@ -188,11 +188,12 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
     from src.tools.orchestrator import orchestrator
     
     # Track the prompt for recursion (append results over turns)
+    current_text_to_process = user_text  # BUG FIX: was undefined
     # Track conversational text across attempts to avoid losing it from history
     accumulated_assistant_text = ""
     
     for attempt in range(recursion_limit):
-        # RAG context is mostly for the initial user query
+        # RAG context is mostly for the initial user query (first attempt only)
         rag_context = retriever.get_relevant_context(current_text_to_process)
         if estimate_tokens([{"content": rag_context}]) > RAG_MAX_CONTEXT_TOKENS:
             rag_context = rag_context[: RAG_MAX_CONTEXT_TOKENS * 4]
@@ -222,12 +223,16 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
                 from src.conversation.memory import _save_to_redis
                 _save_to_redis(session_id, session)
                 await refresh_crm_block(session_id)
+                logger.info(f"🔄 [engine] CRM refreshed after update_crm_profile")
 
-            # Accumulate tool results instead of replacing them
-            if "SYSTEM: Tool results received" not in current_text_to_process:
-                current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool results received: {tool_result}]"
+            # Build the prompt for the follow-up LLM call with tool results
+            if tool_result and "[TOOL_ERROR]" not in tool_result:
+                if "SYSTEM: Tool results received" not in current_text_to_process:
+                    current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool results received. Use this data to answer: {tool_result}]"
+                else:
+                    current_text_to_process += f"\n[SYSTEM: Additional tool result: {tool_result}]"
             else:
-                current_text_to_process += f"\n[SYSTEM: Additional tool result: {tool_result}]"
+                current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool returned no results. Tell the user no matching products were found and suggest they try different keywords.]"
             continue
         
         return accumulated_assistant_text.strip()
@@ -265,7 +270,7 @@ class VoiceEngine:
         apply_micro_compact(session_id)
         loop.run_in_executor(_executor, flush_session_to_db, session_id)
         session = get_or_create_session(session_id)
-        await maybe_extract_to_crm(session, _llm_generate_non_streaming)
+        await maybe_extract_to_crm(session, _llm_generate_non_streaming, session_id=session_id)
 
     async def process_audio(self, session_id: str, audio_bytes: bytes) -> tuple[bytes, str, str]:
         guard_text = self._check_lifecycle_guards(session_id)
@@ -458,12 +463,16 @@ class VoiceEngine:
                     from src.conversation.memory import _save_to_redis
                     _save_to_redis(session_id, session)
                     await refresh_crm_block(session_id)
+                    logger.info(f"🔄 [engine-stream] CRM refreshed after update_crm_profile")
 
-                # Accumulate tool results instead of replacing them
-                if "SYSTEM: Tool results received" not in current_prompt_text:
-                    current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool results received: {tool_result}]"
+                # Build the prompt for the follow-up LLM call with tool results
+                if tool_result and "[TOOL_ERROR]" not in tool_result:
+                    if "SYSTEM: Tool results received" not in current_prompt_text:
+                        current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool results received. Use this data to answer: {tool_result}]"
+                    else:
+                        current_prompt_text += f"\n[SYSTEM: Additional tool result: {tool_result}]"
                 else:
-                    current_prompt_text += f"\n[SYSTEM: Additional tool result: {tool_result}]"
+                    current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool returned no results. Tell the user no matching products were found and suggest they try different keywords.]"
                 continue
             
             if yield_buffer and not hide_remaining:
@@ -488,5 +497,26 @@ class VoiceEngine:
             }
             asyncio.create_task(self._background_memory_work(session_id, session))
             return
+
+        # FALLBACK: All recursion attempts were tool calls — no conversational text was generated.
+        # We MUST still yield a done frame or the frontend hangs forever.
+        logger.warning(f"⚠️ [engine-stream] Recursion limit ({recursion_limit}) exhausted for session={session_id}")
+        fallback_msg = "I've processed your request. Is there anything else I can help you with?"
+        if accumulated_assistant_text.strip():
+            fallback_msg = accumulated_assistant_text.strip()
+        yield {"token": fallback_msg, "done": False}
+        add_message_to_chat(session_id, "assistant", fallback_msg)
+        increment_turn(session_id)
+        session = get_or_create_session(session_id)
+        yield {
+            "token":      "",
+            "done":       True,
+            "latency_ms": 0,
+            "session_id": session_id,
+            "status":     session["status"],
+            "turns_used": session["turns"],
+            "turns_max":  MAX_TURNS,
+        }
+        asyncio.create_task(self._background_memory_work(session_id, session))
 
 llm_engine = VoiceEngine()
