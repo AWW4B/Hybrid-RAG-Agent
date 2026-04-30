@@ -185,7 +185,6 @@ def load_session(session_id: str) -> Optional[dict]:
             "status":      row_dict["status"],
             "user_id":     row_dict.get("user_id"),
             "turn_count":  0,
-            "crm_dirty":   False,
         }
     except Exception as e:
         logger.error(f"[database] Error loading session {session_id}: {e}")
@@ -341,7 +340,6 @@ def _make_empty_session(user_id: Optional[str] = None) -> dict:
         # New fields
         "user_id":    user_id,
         "turn_count": 0,
-        "crm_dirty":  False,
     }
 
 
@@ -526,9 +524,7 @@ def build_inference_payload(
     """
     session = get_or_create_session(session_id)
 
-    # Build CRM context block (cached on session to avoid per-token DB hits)
-    # The 'crm_dirty' flag is cleared ONLY by the async refresh_crm_block() function.
-    crm_block = session.get("_cached_crm_block", "")
+
 
     # Inject Tool descriptions
     from src.tools.orchestrator import orchestrator
@@ -542,7 +538,7 @@ def build_inference_payload(
 
     system_msg = {
         "role":    "system",
-        "content": crm_block + build_system_prompt(
+        "content": build_system_prompt(
             session["state"],
             rag_context=rag_context,
             tools_prompt=tools_prompt,
@@ -553,34 +549,12 @@ def build_inference_payload(
     # Token-budget-aware trim: keep the most recent messages that fit
     trimmed = _fit_history_to_budget(session["history"], CONTEXT_BUDGET_TOKENS)
     
-    # [Diagnostic] Verify identity and CRM presence in logs
+    # [Diagnostic] Verify identity and presence in logs
     user_id = session.get("user_id")
-    crm_len = len(crm_block) if crm_block else 0
-    logger.info(f"🧠 [engine] Context Ready: user_id={user_id}, session={session_id}, crm_chars={crm_len}, has_tool_results={has_tool_results}")
+    logger.info(f"🧠 [engine] Context Ready: user_id={user_id}, session={session_id}, has_tool_results={has_tool_results}")
 
     return [system_msg] + trimmed + [{"role": "user", "content": new_user_message}]
 
-
-async def refresh_crm_block(session_id: str) -> None:
-    """
-    Async: fetch the CRM profile and cache the block on the session.
-    Called once per session init and whenever crm_dirty is set.
-    """
-    session = get_or_create_session(session_id)
-    user_id = session.get("user_id")
-    if not user_id:
-        logger.warning(f"[memory] refresh_crm_block skipped — no user_id for session={session_id}")
-        return
-    try:
-        from src.tools.crm import get_profile, build_crm_context_block
-        profile  = await get_profile(user_id)
-        crm_block = build_crm_context_block(profile)
-        session["_cached_crm_block"] = crm_block
-        session["crm_dirty"] = False
-        _save_to_redis(session_id, session)
-        logger.info(f"[memory] CRM block refreshed for user_id={user_id}: profile_keys={list(profile.keys()) if profile else 'None'}, block_len={len(crm_block)}")
-    except Exception as e:
-        logger.warning(f"[memory] refresh_crm_block failed for {session_id}: {e}")
 
 
 def extract_and_strip_state(session_id: str, raw_response: str) -> str:

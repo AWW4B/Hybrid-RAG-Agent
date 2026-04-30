@@ -78,9 +78,6 @@ async def register(request: Request, body: RegisterRequest):
     pw_hash = hash_password(body.password)
     user_id = await db.create_user(body.username, body.email, pw_hash)
 
-    # 4. Create empty CRM profile
-    await db.upsert_crm_profile(user_id, {})
-
     logger.info(f"[auth] New user registered: {body.username} ({user_id})")
     return {"message": "Account created.", "user_id": user_id}
 
@@ -162,16 +159,12 @@ async def login(request: Request, response: Response, body: LoginRequest):
         samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
-    # Fetch CRM profile name for UI
-    profile = await db.get_crm_profile(user["id"])
-    name = profile.get("name") if profile else user["username"]
-
     logger.info(f"[auth] Login successful: {body.username}")
     return {
         "access_token": token,
         "token_type": "bearer",
         "username": user["username"],
-        "name": name
+        "name": user["username"]
     }
 
 
@@ -196,13 +189,9 @@ async def refresh_token(request: Request, response: Response, user: dict = Depen
         httponly=True, secure=_secure, samesite="lax",
         max_age=JWT_EXPIRY_HOURS * 3600,
     )
-    # Fetch CRM profile name for UI
-    profile = await db.get_crm_profile(user["sub"])
-    name = profile.get("name") if profile else user["username"]
-
     return {
         "access_token": token,
         "message": "Token refreshed.",
         "username": user["username"],
-        "name": name
+        "name": user["username"]
     }

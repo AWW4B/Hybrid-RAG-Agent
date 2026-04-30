@@ -89,19 +89,6 @@ async def init_db() -> None:
                 locked_until     TEXT
             );
 
-            -- NEW: CRM profiles (one per user)
-            CREATE TABLE IF NOT EXISTS crm_profiles (
-                user_id              TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                name                 TEXT,
-                preferred_categories TEXT,
-                budget_range         TEXT,
-                liked_brands         TEXT,
-                disliked_brands      TEXT,
-                last_session_summary TEXT,
-                notes                TEXT,
-                updated_at           TEXT
-            );
-
             -- NEW: Session memory (compacted message state)
             CREATE TABLE IF NOT EXISTS session_memory (
                 session_id    TEXT PRIMARY KEY,
@@ -249,10 +236,8 @@ async def list_users(page: int = 1, page_size: int = 20) -> list[dict]:
     try:
         cursor = await conn.execute(
             """SELECT u.id, u.username, u.email, u.created_at, u.last_login,
-                      u.is_active, u.is_admin, u.failed_attempts, u.locked_until,
-                      CASE WHEN c.user_id IS NOT NULL THEN 1 ELSE 0 END as has_crm
+                      u.is_active, u.is_admin, u.failed_attempts, u.locked_until
                FROM users u
-               LEFT JOIN crm_profiles c ON u.id = c.user_id
                ORDER BY u.created_at DESC
                LIMIT ? OFFSET ?""",
             (page_size, offset),
@@ -262,95 +247,6 @@ async def list_users(page: int = 1, page_size: int = 20) -> list[dict]:
     finally:
         await conn.close()
 
-
-# =============================================================================
-# CRM PROFILES
-# =============================================================================
-async def get_crm_profile(user_id: str) -> Optional[dict]:
-    conn = await _connect()
-    try:
-        cursor = await conn.execute(
-            "SELECT * FROM crm_profiles WHERE user_id = ?", (user_id,)
-        )
-        row = await cursor.fetchone()
-        if not row:
-            return None
-        profile = dict(row)
-        # Deserialize JSON array fields
-        for field in ("preferred_categories", "liked_brands", "disliked_brands"):
-            raw = profile.get(field)
-            if raw:
-                try:
-                    profile[field] = json.loads(raw)
-                except (json.JSONDecodeError, TypeError):
-                    profile[field] = []
-            else:
-                profile[field] = []
-        return profile
-    finally:
-        await conn.close()
-
-
-async def upsert_crm_profile(user_id: str, updates: dict) -> None:
-    """
-    Creates or merges the CRM profile for user_id.
-    Array fields (preferred_categories, liked_brands, disliked_brands) are
-    merged with existing values rather than overwritten.
-    """
-    conn = await _connect()
-    try:
-        # Fetch current
-        cursor = await conn.execute(
-            "SELECT * FROM crm_profiles WHERE user_id = ?", (user_id,)
-        )
-        existing_row = await cursor.fetchone()
-        existing = dict(existing_row) if existing_row else {}
-
-        def _merge_list(field: str) -> str:
-            old = []
-            if existing.get(field):
-                try:
-                    old = json.loads(existing[field])
-                except Exception:
-                    old = []
-            new_vals = updates.get(field, [])
-            if isinstance(new_vals, str):
-                new_vals = [new_vals]
-            merged = list(dict.fromkeys(old + new_vals))  # deduplicate, preserve order
-            return json.dumps(merged)
-
-        now = _now()
-
-        await conn.execute(
-            """INSERT INTO crm_profiles (
-                user_id, name, preferred_categories, budget_range,
-                liked_brands, disliked_brands, last_session_summary, notes, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(user_id) DO UPDATE SET
-                name                 = COALESCE(excluded.name, name),
-                preferred_categories = excluded.preferred_categories,
-                budget_range         = COALESCE(excluded.budget_range, budget_range),
-                liked_brands         = excluded.liked_brands,
-                disliked_brands      = excluded.disliked_brands,
-                last_session_summary = COALESCE(excluded.last_session_summary, last_session_summary),
-                notes                = COALESCE(excluded.notes, notes),
-                updated_at           = excluded.updated_at
-            """,
-            (
-                user_id,
-                updates.get("name", existing.get("name")),
-                _merge_list("preferred_categories"),
-                updates.get("budget_range", existing.get("budget_range")),
-                _merge_list("liked_brands"),
-                _merge_list("disliked_brands"),
-                updates.get("last_session_summary", existing.get("last_session_summary")),
-                updates.get("notes", existing.get("notes")),
-                now,
-            ),
-        )
-        await conn.commit()
-    finally:
-        await conn.close()
 
 
 # =============================================================================

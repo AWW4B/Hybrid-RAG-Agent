@@ -10,7 +10,6 @@ import asyncio
 from typing import Dict, Any, Optional
 
 # --- Tool Imports ---
-from src.tools.crm import handle_crm_tool
 from src.tools.shipping import estimate_shipping
 from src.tools.product_search import search_products
 from src.tools.comparison import compare_products
@@ -22,20 +21,6 @@ logger = logging.getLogger(__name__)
 
 # Metadata registry for LLM prompt injection
 TOOLS_METADATA = [
-    {
-        "name": "update_crm_profile",
-        "description": "CRITICAL: Save/Update user info immediately when they state a preference (e.g. 'I like Nike') or personal detail (e.g. 'My name is Gordon').",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "updates": {
-                    "type": "object", 
-                    "description": "Dict of fields. Keys: name, preferred_categories (list), liked_brands (list), disliked_brands (list), budget_range, notes."
-                }
-            },
-            "required": ["updates"]
-        }
-    },
     {
         "name": "search_products",
         "description": "Search the local product catalog. Use this IMMEDIATELY when a user mentions a brand or product type.",
@@ -91,7 +76,6 @@ TOOLS_METADATA = [
 class ToolOrchestrator:
     def __init__(self):
         self.tools = {
-            "update_crm_profile": handle_crm_tool,
             "search_products": search_products,
             "estimate_shipping": estimate_shipping,
             "compare_products": compare_products,
@@ -113,14 +97,10 @@ class ToolOrchestrator:
             if tool_name in self.tools:
                 func = self.tools[tool_name]
                 
-                # Manual dispatch for tools requiring context injection
-                if tool_name in ["get_crm_profile", "update_crm_profile"]:
-                    result = await func(tool_name, params, user_id, session)
+                if asyncio.iscoroutinefunction(func):
+                    result = await func(**params)
                 else:
-                    if asyncio.iscoroutinefunction(func):
-                        result = await func(**params)
-                    else:
-                        result = await asyncio.get_event_loop().run_in_executor(None, lambda: func(**params))
+                    result = await asyncio.get_event_loop().run_in_executor(None, lambda: func(**params))
                 
                 return f"\n[TOOL_RESULT: {tool_name}]\n{result}\n"
             return f"\n[TOOL_ERROR] Tool '{tool_name}' not found.\n"

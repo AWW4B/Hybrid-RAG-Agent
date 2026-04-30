@@ -445,7 +445,7 @@ function UsersPanel() {
   const [data, setData]         = useState(null)
   const [loading, setLoading]   = useState(false)
   const [selected, setSelected] = useState(null)
-  const [crm, setCrm]           = useState(null)
+
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -458,9 +458,6 @@ function UsersPanel() {
 
   const selectUser = async (user) => {
     setSelected(user)
-    setCrm(null)
-    try { setCrm(await adminFetch(`/users/${user.id}/crm`)) }
-    catch { setCrm({ error: 'No CRM profile.' }) }
   }
 
   const unlock = async (userId) => {
@@ -518,38 +515,7 @@ function UsersPanel() {
         </div>
       )}
 
-      {/* CRM side panel */}
-      <AnimatePresence>
-        {selected && (
-          <motion.div
-            initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 40 }}
-            className="absolute top-0 right-0 w-72 bg-white rounded-2xl shadow-2xl border border-gray-100 p-5 z-10"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-gray-700">CRM — {selected.username}</h3>
-              <button onClick={() => setSelected(null)}
-                className="p-1 text-gray-400 hover:text-gray-600"><X size={14} /></button>
-            </div>
-            {!crm ? (
-              <p className="text-xs text-gray-400">Loading…</p>
-            ) : crm.error ? (
-              <p className="text-xs text-gray-400">{crm.error}</p>
-            ) : (
-              <dl className="space-y-2 text-xs">
-                {Object.entries(crm).filter(([k]) => k !== 'user_id').map(([k, v]) => (
-                  v ? (
-                    <div key={k}>
-                      <dt className="font-semibold text-gray-500 capitalize">{k.replace(/_/g, ' ')}</dt>
-                      <dd className="text-gray-700 ml-1">{Array.isArray(v) ? v.join(', ') : String(v)}</dd>
-                    </div>
-                  ) : null
-                ))}
-              </dl>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+
     </section>
   )
 }

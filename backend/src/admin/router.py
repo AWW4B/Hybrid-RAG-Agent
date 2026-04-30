@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from src.auth.security import require_admin
 from src import db
-from src.conversation.memory import list_active_sessions, get_or_create_session, refresh_crm_block
+from src.conversation.memory import list_active_sessions, get_or_create_session
 
 logger = logging.getLogger(__name__)
 
@@ -168,42 +168,6 @@ async def run_benchmark(n_runs: int = 3):
                     yield f"data: {_json.dumps({'query': query, 'status': 'error', 'error': str(e), 'type': test_type})}\n\n"
 
 
-        # ── CRM / Cross-Session Recall test (Persistence verification) ─────
-        for _ in range(n_runs):
-            test_user_id = f"test-bench-{_uuid.uuid4().hex[:8]}"
-            session_id_1 = str(_uuid.uuid4())
-            session_id_2 = str(_uuid.uuid4())
-            
-            try:
-                # Part 1: Registration session
-                # We need to manually initialize the session with the user_id
-                get_or_create_session(session_id_1, user_id=test_user_id)
-                
-                name = "Awwab" if _ % 2 == 0 else "Uwaid"
-                pref = "HP laptops" if _ % 2 == 0 else "Gaming PC"
-                
-                prime_msg = f"My name is {name} and I am looking for a {pref}."
-                await llm_engine.generate(session_id=session_id_1, user_message=prime_msg)
-
-                # Part 2: Recall session (new session_id, same user_id)
-                get_or_create_session(session_id_2, user_id=test_user_id)
-                await refresh_crm_block(session_id_2)
-                
-                t0 = time.perf_counter()
-                recall_query = "What is my name and what kind of product was I looking for previously?"
-                result = await asyncio.wait_for(
-                    llm_engine.generate(session_id=session_id_2, user_message=recall_query),
-                    timeout=60.0,
-                )
-                latency = (time.perf_counter() - t0) * 1000
-                
-                resp_lower = result["response"].lower()
-                passed = name.lower() in resp_lower and (pref.lower() in resp_lower or "laptop" in resp_lower or "gaming" in resp_lower)
-                
-                yield f"data: {_json.dumps({'query': recall_query, 'latency_ms': round(latency, 1), 'status': 'ok', 'passed': passed, 'type': 'crm', 'response_preview': result['response'][:80] + '...'})}\n\n"
-            except Exception as e:
-                yield f"data: {_json.dumps({'query': 'CRM Recall Test', 'status': 'error', 'error': str(e), 'type': 'crm'})}\n\n"
-
         yield f"data: {_json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
@@ -308,7 +272,7 @@ async def benchmark_history(limit: int = 100):
 
 
 # =============================================================================
-# USER / CRM TABLE
+# USERS TABLE
 # =============================================================================
 @admin_router.get("/users")
 async def list_users(page: int = 1, page_size: int = 20):
@@ -316,12 +280,6 @@ async def list_users(page: int = 1, page_size: int = 20):
     return {"page": page, "page_size": page_size, "users": users}
 
 
-@admin_router.get("/users/{user_id}/crm")
-async def get_user_crm(user_id: str):
-    profile = await db.get_crm_profile(user_id)
-    if not profile:
-        raise HTTPException(404, detail="CRM profile not found.")
-    return profile
 
 
 @admin_router.post("/users/{user_id}/unlock")

@@ -5,7 +5,6 @@
 # Changes from original:
 #   - Stub /auth/* replaced by auth.router (bcrypt, register, lockout)
 #   - WebSocket now requires JWT token query param; user_id injected into session
-#   - refresh_crm_block() called once per WebSocket connect
 #   - session_memory persisted on WebSocket disconnect
 #   - Admin router mounted at /admin
 #   - db.init_db() called in lifespan (async)
@@ -74,7 +73,6 @@ from src.conversation.memory import (
     reset_session,
     delete_session as db_delete_session,
     init_sessions_from_db,
-    refresh_crm_block,
 )
 from src.admin.router import admin_router
 
@@ -175,7 +173,6 @@ async def websocket_chat(
     from src.conversation.memory import flush_session_to_db
     flush_session_to_db(session_id)
     
-    await refresh_crm_block(session_id)
 
     try:
         while True:
@@ -221,11 +218,6 @@ async def websocket_chat(
 
                 user_message = sanitize_text(raw_message)
 
-                # If CRM was updated this turn, refresh the cached block before next LLM call
-                session = get_or_create_session(session_id)
-                if session.get("crm_dirty"):
-                    await refresh_crm_block(session_id)
-
                 async for chunk in llm_engine.stream(session_id, user_message):
                     await websocket.send_json(chunk)
                     if chunk.get("done"):
@@ -261,13 +253,11 @@ async def chat(
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
     user_message = sanitize_text(body.message)
-    # Bind user_id and refresh CRM context
+    # Bind user_id
     get_or_create_session(session_id, user_id=user["sub"])
     # Force immediate persistence
     from src.conversation.memory import flush_session_to_db
     flush_session_to_db(session_id)
-    
-    await refresh_crm_block(session_id)
 
     result = await llm_engine.generate(session_id=session_id, user_message=user_message)
     return ChatResponse(**result)
