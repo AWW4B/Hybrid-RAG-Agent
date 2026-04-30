@@ -57,11 +57,18 @@ def search_products(query: str) -> str:
                         if numeric_part:
                             price_val = int(numeric_part)
                     
-                    results.append({
-                        "title": title,
-                        "price_str": price_str or "Price on request",
-                        "price_val": price_val
-                    })
+                    # Improved Matching: Check if all keywords from search_term exist in content
+                    # We filter out very short words to avoid matching 'a', 'in', etc.
+                    keywords = [kw for kw in search_term.split() if len(kw) > 2]
+                    if not keywords: keywords = [search_term] # fallback
+                    
+                    match_count = sum(1 for kw in keywords if kw in content.lower())
+                    if match_count >= len(keywords) * 0.7: # 70% keyword match threshold
+                        results.append({
+                            "title": title,
+                            "price_str": price_str or "Price on request",
+                            "price_val": price_val
+                        })
         
         if not results:
             return f"I couldn't find any products matching '{query}' in our local catalog."

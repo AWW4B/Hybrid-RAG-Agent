@@ -188,7 +188,8 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
     from src.tools.orchestrator import orchestrator
     
     # Track the prompt for recursion (append results over turns)
-    current_text_to_process = user_text
+    # Track conversational text across attempts to avoid losing it from history
+    accumulated_assistant_text = ""
     
     for attempt in range(recursion_limit):
         # RAG context is mostly for the initial user query
@@ -202,6 +203,15 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
         loop = asyncio.get_event_loop()
         raw_response = await loop.run_in_executor(_executor, _run_llm_sync, prompt, MAX_TOKENS)
         
+        # Extract conversational text (pre-tool-call or final response)
+        # If this response contains a tool call, we ignore the conversational text 
+        # from this attempt to avoid "I am a shopping assistant" filler or refusals 
+        # appearing before the actual tool result.
+        if "<TOOL_CALL>" not in raw_response:
+            clean_segment = extract_and_strip_state(session_id, raw_response)
+            if clean_segment:
+                accumulated_assistant_text += (clean_segment + " ")
+
         if "<TOOL_CALL>" in raw_response:
             logger.info(f"🛠️ [engine] Tool call detected on attempt {attempt+1}")
             session = get_or_create_session(session_id)
@@ -213,13 +223,16 @@ async def _generate_text(session_id: str, user_text: str, recursion_limit: int =
                 _save_to_redis(session_id, session)
                 await refresh_crm_block(session_id)
 
-            # Inject tool result as a system-like injection to guide the final answer
-            current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool execution finished. Use this data to answer the user: {tool_result}]"
+            # Accumulate tool results instead of replacing them
+            if "SYSTEM: Tool results received" not in current_text_to_process:
+                current_text_to_process = f"{user_text}\n\n[SYSTEM: Tool results received: {tool_result}]"
+            else:
+                current_text_to_process += f"\n[SYSTEM: Additional tool result: {tool_result}]"
             continue
         
-        return extract_and_strip_state(session_id, raw_response)
+        return accumulated_assistant_text.strip()
     
-    return "I'm having trouble completing that request right now."
+    return accumulated_assistant_text.strip() or "I'm having trouble completing that request right now."
 
 
 # =============================================================================
@@ -345,6 +358,9 @@ class VoiceEngine:
         loop = asyncio.get_event_loop()
         loop.run_in_executor(_executor, flush_session_to_db, session_id)
 
+        # Track conversational text across attempts to avoid losing it from history
+        accumulated_assistant_text = ""
+
         for attempt in range(recursion_limit):
             start = time.perf_counter()
             rag_context = retriever.get_relevant_context(current_prompt_text)
@@ -423,6 +439,15 @@ class VoiceEngine:
                 if safe_to_yield:
                     yield {"token": safe_to_yield, "done": False}
 
+            # Capture the clean conversational segment from this attempt
+            # If this response contains a tool call, we ignore the conversational text 
+            # from this attempt to avoid "I am a shopping assistant" filler or refusals 
+            # appearing before the actual tool result.
+            if "<TOOL_CALL>" not in full_text:
+                clean_segment = extract_and_strip_state(session_id, full_text)
+                if clean_segment:
+                    accumulated_assistant_text += (clean_segment + " ")
+
             if is_tool_call:
                 logger.info(f"🛠️ [engine-stream] Tool call detected on attempt {attempt+1}")
                 session = get_or_create_session(session_id)
@@ -434,16 +459,18 @@ class VoiceEngine:
                     _save_to_redis(session_id, session)
                     await refresh_crm_block(session_id)
 
-                # Clear buffer and update prompt for final answer
-                current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool results received. Provide the final answer now: {tool_result}]"
+                # Accumulate tool results instead of replacing them
+                if "SYSTEM: Tool results received" not in current_prompt_text:
+                    current_prompt_text = f"{user_message}\n\n[SYSTEM: Tool results received: {tool_result}]"
+                else:
+                    current_prompt_text += f"\n[SYSTEM: Additional tool result: {tool_result}]"
                 continue
             
             if yield_buffer and not hide_remaining:
                 yield {"token": yield_buffer, "done": False}
 
-            # Immediate persistence for first message awareness (already added at start of stream)
-            clean_response = extract_and_strip_state(session_id, full_text)
-            add_message_to_chat(session_id, "assistant", clean_response.strip())
+            # Final persistence using the accumulated text across all attempts
+            add_message_to_chat(session_id, "assistant", accumulated_assistant_text.strip())
             increment_turn(session_id)
             
             if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
