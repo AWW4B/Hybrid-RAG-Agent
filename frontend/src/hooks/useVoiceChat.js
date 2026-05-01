@@ -1,328 +1,301 @@
 // =============================================================================
-// src/hooks/useVoiceChat.js
-// Primary A3 hook: binary audio WebSocket + chat state machine
-//
-// Voice mode  → MediaRecorder sends WebM binary → backend STT→LLM→TTS → WAV back
-// Text mode   → sends JSON text frame → backend streams tokens back
+// src/hooks/useChat.js
+// Chat state hook — WebSocket text streaming + session management.
+// Matched to new backend: /ws/chat, {session_id, message, user_id}
 // =============================================================================
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   createChatWebSocket,
-  sendTextFrame,
-  getWelcome,
-  resetSession,
-  getSession,
-  generateSessionId,
+  sendTextMessage,
+  createSession,
+  getSessions,
+  getSessionHistory,
   deleteSession,
 } from '../utils/api.js'
 
-const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-  ? 'audio/webm;codecs=opus'
-  : 'audio/webm'
-
-export default function useVoiceChat({ token } = {}) {
+export default function useChat({ user }) {
   const [messages, setMessages]     = useState([])
   const [isLoading, setIsLoading]   = useState(false)
-  const [micState, setMicState]     = useState('idle')   // idle|requesting|recording|processing
-  const [isPlaying, setIsPlaying]   = useState(false)
-  const [status, setStatus]         = useState('active') // active|ended
-  const [turnsUsed, setTurnsUsed]   = useState(0)
-  const [turnsMax, setTurnsMax]     = useState(15)
-  const [voiceError, setVoiceError] = useState(null)
+  const [sessionId, setSessionId]   = useState(null)
+  const [sessions, setSessions]     = useState([])
+  const [sessionsLoading, setSessionsLoading] = useState(false)
 
-  const sessionIdRef = useRef(generateSessionId())
-  const wsRef        = useRef(null)
-  const recorderRef  = useRef(null)
-  const streamRef    = useRef(null)
-  const audioRef     = useRef(null)
-  const reconnTimer  = useRef(null)
-  const tokenRef     = useRef(token)   // always holds latest token without recreating connect
+  const wsRef       = useRef(null)
+  const reconnTimer = useRef(null)
+  const sessionRef  = useRef(null)
+  const userRef     = useRef(user)
 
-  // Keep tokenRef in sync whenever the token prop changes
-  useEffect(() => { tokenRef.current = token }, [token])
+  useEffect(() => { userRef.current = user }, [user])
+  useEffect(() => { sessionRef.current = sessionId }, [sessionId])
 
-  // ---------------------------------------------------------------------------
-  // WebSocket lifecycle
-  // ---------------------------------------------------------------------------
-  const connect = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState < 2) return // already open/connecting
+  const [toolStatus, setToolStatus] = useState(null) // {status: 'running'|'done', name?, tools_used?}
 
-    const ws = createChatWebSocket(sessionIdRef.current, tokenRef.current)
+  // ── WebSocket lifecycle ──────────────────────────────────────────
+  const connect = useCallback((sid) => {
+    if (!sid) return
+    // Close existing
+    if (wsRef.current && wsRef.current.readyState < 2) {
+      wsRef.current.close()
+    }
+
+    const ws = createChatWebSocket(sid)
     wsRef.current = ws
 
     ws.onopen = () => {
       clearTimeout(reconnTimer.current)
     }
 
-    ws.onmessage = async (event) => {
-      // Binary frame = TTS audio or streamed WAV
-      if (event.data instanceof Blob) {
-        setIsPlaying(true)
-        const url = URL.createObjectURL(event.data)
-        const audio = new Audio(url)
-        audioRef.current = audio
-        audio.onended = () => { setIsPlaying(false); URL.revokeObjectURL(url) }
-        audio.onerror = () => { setIsPlaying(false); URL.revokeObjectURL(url) }
-        try { await audio.play() } catch { setIsPlaying(false) }
-        return
-      }
-
-      // Text frame = JSON control message
+    ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
 
-        if (msg.event === 'turn_complete') {
-          // Add the decoded voice message text to the UI
-          if (msg.user_text || msg.assistant_text) {
-             setMessages(prev => {
-                const newMsgs = [...prev]
-                // Replace the temporary "🎤 Voice message" with the actual user_text (or remove if blank)
-                const lastIdx = newMsgs.findLastIndex(m => m.isVoice && m.role === 'user')
-                if (lastIdx !== -1) {
-                   newMsgs[lastIdx] = { 
-                     ...newMsgs[lastIdx], 
-                     content: msg.user_text || '(Unintelligible audio)',
-                     isVoice: false // no longer just a placeholder
-                   }
-                }
-                
-                // Add the assistant's reply text
-                if (msg.assistant_text) {
-                  newMsgs.push({
-                     role: 'assistant',
-                     content: msg.assistant_text,
-                     timestamp: new Date().toISOString()
-                  })
-                }
-                return newMsgs
-             })
+        if (msg.error) {
+          console.error('[ws] Server error:', msg.error)
+          setIsLoading(false)
+          setToolStatus(null)
+          return
+        }
+
+        // Tool status indicator
+        if ('tool_status' in msg) {
+          if (msg.tool_status === 'running') {
+            setToolStatus({ status: 'running', name: msg.tool_name || 'Processing...' })
+          } else if (msg.tool_status === 'done') {
+            setToolStatus({ status: 'done', tools_used: msg.tools_used || [] })
+            // Clear after a short delay so user sees the result
+            setTimeout(() => setToolStatus(null), 2000)
           }
-
-          setTurnsUsed(msg.turns_used ?? 0)
-          setTurnsMax(msg.turns_max ?? 15)
-          if (msg.status === 'ended') setStatus('ended')
-          setMicState('idle')
-          setIsLoading(false)
           return
         }
 
-        if (msg.event === 'error') {
-          setVoiceError(msg.detail || 'An error occurred.')
-          setMicState('idle')
-          setIsLoading(false)
+        // Streaming token
+        if ('token' in msg && !msg.done) {
+          setToolStatus(null) // Clear tool status when tokens start
+          setMessages(prev => {
+            const last = prev[prev.length - 1]
+            if (last && last.streaming) {
+              return [...prev.slice(0, -1), { ...last, content: last.content + msg.token }]
+            }
+            return [...prev, {
+              role: 'assistant',
+              content: msg.token,
+              streaming: true,
+              timestamp: new Date().toISOString(),
+            }]
+          })
           return
         }
 
-        // Legacy A2 text streaming: { token, done, full_response, latency_ms }
-        if ('token' in msg) {
-          if (!msg.done) {
-            setMessages(prev => {
-              const last = prev[prev.length - 1]
-              if (last && last.streaming) {
-                return [...prev.slice(0, -1), { ...last, content: last.content + msg.token }]
-              }
-              return [...prev, {
-                role: 'assistant', content: msg.token,
-                streaming: true, timestamp: new Date().toISOString(),
+        // Done frame
+        if (msg.done) {
+          setMessages(prev => {
+            const last = prev[prev.length - 1]
+            if (last && last.streaming) {
+              return [...prev.slice(0, -1), {
+                ...last,
+                content: msg.full_response || last.content,
+                streaming: false,
+                latency_ms: msg.latency_ms ?? null,
               }]
-            })
-          } else {
-            // done frame: finalise message and attach latency
-            setMessages(prev => {
-              const last = prev[prev.length - 1]
-              if (last && last.streaming) {
-                return [...prev.slice(0, -1), {
-                  ...last,
-                  content: msg.full_response || last.content,
-                  streaming: false,
-                  latency_ms: msg.latency_ms ?? null,
-                }]
-              }
-              return prev
-            })
-            // Surface session state from done frame
-            if (msg.status) setStatus(msg.status)
-            if (msg.turns_used !== undefined) setTurnsUsed(msg.turns_used)
-            if (msg.turns_max  !== undefined) setTurnsMax(msg.turns_max)
-            setIsLoading(false)
-          }
+            }
+            return prev
+          })
+          setIsLoading(false)
           return
         }
-
-        // Session state from text fallback
-        if (msg.status) {
-          setStatus(msg.status)
-          if (msg.turns_used !== undefined) setTurnsUsed(msg.turns_used)
-          if (msg.turns_max  !== undefined) setTurnsMax(msg.turns_max)
-        }
-      } catch { /* non-JSON text, ignore */ }
+      } catch { /* non-JSON, ignore */ }
     }
 
     ws.onclose = () => {
-      reconnTimer.current = setTimeout(connect, 2000)
+      reconnTimer.current = setTimeout(() => {
+        if (sessionRef.current) connect(sessionRef.current)
+      }, 2000)
+    }
+
+    ws.onerror = () => {
+      setIsLoading(false)
+      setToolStatus(null)
     }
   }, [])
 
-  // Connect & load welcome on mount
+  // ── Initialize on mount ──────────────────────────────────────────
   useEffect(() => {
-    connect()
-    getWelcome(sessionIdRef.current)
-      .then(({ response }) => {
-        setMessages([{
-          role: 'assistant', content: response,
-          timestamp: new Date().toISOString(),
-        }])
-      })
-      .catch(() => {
-        setMessages([{
-          role: 'assistant',
-          content: "Hi! I'm Daraz Assistant 🛍️. What are you looking to buy today?",
-          timestamp: new Date().toISOString(),
-        }])
-      })
+    if (!user?.user_id) return
+
+    // Load sessions and auto-create one if none exist
+    const init = async () => {
+      setSessionsLoading(true)
+      try {
+        const { sessions: s } = await getSessions(user.user_id)
+        setSessions(s || [])
+
+        if (s && s.length > 0) {
+          // Load most recent session
+          const latest = s[0]
+          setSessionId(latest.session_id)
+          connect(latest.session_id)
+          // Load history
+          try {
+            const { messages: hist } = await getSessionHistory(latest.session_id)
+            if (hist && hist.length > 0) {
+              setMessages(hist.map(m => ({
+                role: m.role,
+                content: m.content,
+                timestamp: new Date().toISOString(),
+              })))
+            } else {
+              setMessages([{
+                role: 'assistant',
+                content: "Hi! I'm Daraz Assistant 🛍️ — your AI shopping guide. What can I help you find today?",
+                timestamp: new Date().toISOString(),
+              }])
+            }
+          } catch {
+            setMessages([{
+              role: 'assistant',
+              content: "Hi! I'm Daraz Assistant 🛍️ — your AI shopping guide. What can I help you find today?",
+              timestamp: new Date().toISOString(),
+            }])
+          }
+        } else {
+          // Create first session
+          const { session_id } = await createSession(user.user_id, 'New Chat')
+          setSessionId(session_id)
+          setSessions([{ session_id, title: 'New Chat', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }])
+          connect(session_id)
+          setMessages([{
+            role: 'assistant',
+            content: "Hi! I'm Daraz Assistant 🛍️ — your AI shopping guide. What can I help you find today?",
+            timestamp: new Date().toISOString(),
+          }])
+        }
+      } catch (e) {
+        console.error('[useChat] Init failed:', e)
+        // Create a session anyway
+        try {
+          const { session_id } = await createSession(user.user_id, 'New Chat')
+          setSessionId(session_id)
+          connect(session_id)
+          setMessages([{
+            role: 'assistant',
+            content: "Hi! I'm Daraz Assistant 🛍️ — your AI shopping guide. What can I help you find today?",
+            timestamp: new Date().toISOString(),
+          }])
+        } catch {}
+      } finally {
+        setSessionsLoading(false)
+      }
+    }
+
+    init()
 
     return () => {
       clearTimeout(reconnTimer.current)
       wsRef.current?.close()
     }
-  }, [connect])
+  }, [user?.user_id, connect])
 
-  // ---------------------------------------------------------------------------
-  // Text send (fallback mode, also used by QuickActions)
-  // ---------------------------------------------------------------------------
+  // ── Send text ────────────────────────────────────────────────────
   const send = useCallback((text) => {
-    if (!text.trim() || status === 'ended') return
-    const userMsg = { role: 'user', content: text, timestamp: new Date().toISOString() }
-    setMessages(prev => [...prev, userMsg])
+    if (!text.trim() || !sessionRef.current || !userRef.current) return
+    setMessages(prev => [...prev, {
+      role: 'user',
+      content: text,
+      timestamp: new Date().toISOString(),
+    }])
     setIsLoading(true)
-    sendTextFrame(wsRef.current, sessionIdRef.current, text)
-  }, [status])
-
-  // ---------------------------------------------------------------------------
-  // Voice recording
-  // ---------------------------------------------------------------------------
-  const startRecording = useCallback(async () => {
-    if (micState !== 'idle' || status === 'ended') return
-    setMicState('requesting')
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
-      const recorder = new MediaRecorder(stream, { mimeType: MIME })
-      recorderRef.current = recorder
-
-      // Add outgoing voice message placeholder
-      const voiceMsg = {
-        role: 'user', content: '🎤 Voice message', isVoice: true,
-        timestamp: new Date().toISOString(),
-      }
-      setMessages(prev => [...prev, voiceMsg])
-      setIsLoading(true)
-
-      const chunks = []
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data)
-      }
-      recorder.onstop = () => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          const blob = new Blob(chunks, { type: MIME })
-          wsRef.current.send(blob)           // send full audio file → backend STT+LLM+TTS
-        }
-      }
-
-      recorder.start()  // collect until stopped
-      setMicState('recording')
-    } catch (err) {
-      setVoiceError('Microphone access denied.')
-      setMicState('idle')
-    }
-  }, [micState, status])
-
-  const stopRecording = useCallback(() => {
-    if (micState !== 'recording') return
-    recorderRef.current?.stop()
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    setMicState('processing')
-  }, [micState])
-
-  // ---------------------------------------------------------------------------
-  // Stop TTS playback
-  // ---------------------------------------------------------------------------
-  const stopSpeaking = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
-      setIsPlaying(false)
-    }
+    sendTextMessage(wsRef.current, sessionRef.current, text, userRef.current.user_id)
   }, [])
 
-  // ---------------------------------------------------------------------------
-  // New chat / reset
-  // ---------------------------------------------------------------------------
-  const reset = useCallback(async () => {
-    stopSpeaking()
-    recorderRef.current?.stop()
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    setMicState('idle')
+  // ── New chat ─────────────────────────────────────────────────────
+  const newChat = useCallback(async () => {
+    if (!userRef.current?.user_id) return
     setIsLoading(false)
-    setIsPlaying(false)
-    setVoiceError(null)
-
-    await resetSession(sessionIdRef.current).catch(() => {})
-    sessionIdRef.current = generateSessionId()
     wsRef.current?.close()
-    setMessages([])
-    setStatus('active')
-    setTurnsUsed(0)
 
-    // Small delay for WS to re-connect, then fetch new welcome
-    setTimeout(() => {
-      connect()
-      getWelcome(sessionIdRef.current)
-        .then(({ response }) => {
-          setMessages([{ role: 'assistant', content: response, timestamp: new Date().toISOString() }])
-        })
-        .catch(() => {})
-    }, 200)
-  }, [connect, stopSpeaking])
-
-  // ---------------------------------------------------------------------------
-  // Load a previous session from history
-  // ---------------------------------------------------------------------------
-  const loadSession = useCallback(async (sid) => {
     try {
-      const data = await getSession(sid)
-      sessionIdRef.current = sid
-      wsRef.current?.close()
-      setMessages(data.history.map(m => ({
-        role: m.role, content: m.content, timestamp: m.timestamp || new Date().toISOString(),
-      })))
-      setStatus(data.status || 'active')
-      setTurnsUsed(data.turns || 0)
-      setTurnsMax(data.turns_max || 15)
-      setTimeout(connect, 200)
-    } catch (err) {
-      setVoiceError('Failed to load session.')
+      const { session_id } = await createSession(userRef.current.user_id, 'New Chat')
+      setSessionId(session_id)
+      connect(session_id)
+      setMessages([{
+        role: 'assistant',
+        content: "Hi! I'm Daraz Assistant 🛍️ — fresh chat started. What are you looking for?",
+        timestamp: new Date().toISOString(),
+      }])
+      // Refresh sessions list
+      const { sessions: s } = await getSessions(userRef.current.user_id)
+      setSessions(s || [])
+    } catch (e) {
+      console.error('[useChat] New chat failed:', e)
     }
   }, [connect])
 
-  const clearVoiceError = useCallback(() => setVoiceError(null), [])
+  // ── Load session ─────────────────────────────────────────────────
+  const loadSession = useCallback(async (sid) => {
+    if (!sid) return
+    setIsLoading(false)
+    wsRef.current?.close()
+    setSessionId(sid)
+    connect(sid)
+
+    try {
+      const { messages: hist } = await getSessionHistory(sid)
+      if (hist && hist.length > 0) {
+        setMessages(hist.map(m => ({
+          role: m.role,
+          content: m.content,
+          timestamp: new Date().toISOString(),
+        })))
+      } else {
+        setMessages([{
+          role: 'assistant',
+          content: "This chat is empty. Ask me anything!",
+          timestamp: new Date().toISOString(),
+        }])
+      }
+    } catch {
+      setMessages([{
+        role: 'assistant',
+        content: "Couldn't load chat history. Start fresh!",
+        timestamp: new Date().toISOString(),
+      }])
+    }
+  }, [connect])
+
+  // ── Delete session ───────────────────────────────────────────────
+  const removeSession = useCallback(async (sid) => {
+    try {
+      await deleteSession(sid)
+      setSessions(prev => prev.filter(s => s.session_id !== sid))
+      // If we deleted the current session, start a new one
+      if (sid === sessionRef.current) {
+        await newChat()
+      }
+    } catch (e) {
+      console.error('[useChat] Delete failed:', e)
+    }
+  }, [newChat])
+
+  // ── Refresh sessions ─────────────────────────────────────────────
+  const refreshSessions = useCallback(async () => {
+    if (!userRef.current?.user_id) return
+    try {
+      const { sessions: s } = await getSessions(userRef.current.user_id)
+      setSessions(s || [])
+    } catch {}
+  }, [])
 
   return {
     messages,
     isLoading,
-    micState,
-    isPlaying,
-    status,
-    turnsUsed,
-    turnsMax,
-    voiceError,
-    sessionId: sessionIdRef.current,
+    toolStatus,
+    sessionId,
+    sessions,
+    sessionsLoading,
     send,
-    startRecording,
-    stopRecording,
-    stopSpeaking,
-    reset,
+    newChat,
     loadSession,
-    clearVoiceError,
+    removeSession,
+    refreshSessions,
   }
 }

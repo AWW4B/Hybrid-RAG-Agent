@@ -93,3 +93,24 @@ class Indexer:
 if __name__ == "__main__":
     indexer = Indexer()
     indexer.run()
+
+def auto_index_if_needed() -> None:
+    """
+    Called at startup. Indexes the dataset into ChromaDB only if the
+    collection is empty. Safe to call on every boot.
+    """
+    try:
+        client = PersistentClient(
+            path=CHROMA_PATH,
+            settings=Settings(anonymized_telemetry=False)
+        )
+        col = client.get_or_create_collection(name=COLLECTION_NAME)
+        count = col.count()
+        if count > 0:
+            logger.info(f"[indexer] ChromaDB already has {count} chunks — skipping re-index.")
+            return
+        logger.info("[indexer] ChromaDB is empty — running full dataset indexing...")
+        indexer = Indexer()
+        indexer.run()
+    except Exception as e:
+        logger.error(f"[indexer] auto_index_if_needed failed: {e}")

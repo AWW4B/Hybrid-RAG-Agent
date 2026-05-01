@@ -62,6 +62,8 @@ services:
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN:-http://localhost:3000}
       - JWT_SECRET=${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION}
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/src
+      - DB_PATH=/data/sessions.db
       - ANONYMIZED_TELEMETRY=False
     volumes:
       - db-data:/data

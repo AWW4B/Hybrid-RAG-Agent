@@ -1,395 +1,319 @@
-# =============================================================================
-# backend/src/main.py
-# FastAPI application — security, routing, WebSocket, middleware.
-#
-# Changes from original:
-#   - Stub /auth/* replaced by auth.router (bcrypt, register, lockout)
-#   - WebSocket now requires JWT token query param; user_id injected into session
-#   - session_memory persisted on WebSocket disconnect
-#   - Admin router mounted at /admin
-#   - db.init_db() called in lifespan (async)
-# =============================================================================
+"""
+main.py — FastAPI application entry point.
 
-import json
-import logging
-import os
+Endpoints:
+  POST   /auth/register
+  POST   /auth/login
+  POST   /auth/logout
+  POST   /sessions/create
+  GET    /sessions?user_id=X       — list sessions for a user
+  GET    /sessions/{session_id}/history
+  DELETE /sessions/{session_id}
+  WS     /ws/chat                  — streaming chat via WebSocket
+  POST   /voice                    — non-streaming chat (for voice pipeline)
+  POST   /warmup                   — pre-heat the model
+  GET    /admin/dashboard          — placeholder admin route
+  GET    /health                   — liveness probe
+"""
 
-# --- NUCLEAR OPTION: Silencing persistent ChromaDB telemetry errors ---
-class TelemetryFilter(logging.Filter):
-    def filter(self, record):
-        return "telemetry" not in record.getMessage().lower() and "posthog" not in record.getMessage().lower()
-
-logging.getLogger("chromadb").addFilter(TelemetryFilter())
-logging.getLogger("chromadb").setLevel(logging.ERROR)
-os.environ["ANONYMIZED_TELEMETRY"] = "False"
-# --------------------------------------------------------------------
-
-# --- MONKEY PATCH: Silencing persistent ChromaDB telemetry errors ---
-try:
-    import chromadb.telemetry.product.posthog as posthog
-    if hasattr(posthog, "Posthog"):
-        posthog.Posthog.capture = lambda *args, **kwargs: None
-except Exception:
-    pass
-# --------------------------------------------------------------------
-import os
-import uuid
 import time
-from contextlib import asynccontextmanager#
-from typing import Optional
+import logging
+import asyncio
+from contextlib import asynccontextmanager
 
-import bleach
-from fastapi import (
-    FastAPI, Request, APIRouter, Depends, HTTPException,
-    Query, WebSocket, WebSocketDisconnect,
-)
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
-from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel
 
-from src.config import (
-    FRONTEND_ORIGIN,
-    MAX_PAYLOAD_BYTES,
-    MAX_TURNS,
-    truncate_to_token_limit,
-)
-from src import db
-from src.auth.security import get_current_user, get_user_from_ws_token, require_admin
-from src.auth.router import auth_router
-from src.engine.llm import llm_engine
-from src.conversation.memory import (
-    get_or_create_session,
-    get_session_status,
-    get_welcome_message,
-    list_active_sessions,
-    list_sessions,
-    load_session,
-    reset_session,
-    delete_session as db_delete_session,
-    init_sessions_from_db,
-)
-from src.admin.router import admin_router
+import db
+from engine import llm
+from conversation import memory
+from auth.router import router as auth_router
 
-# =============================================================================
-# LOGGING
-# =============================================================================
+# ── Logging ─────────────────────────────────────────────────────────
+# Suppress noisy third-party loggers
+for noisy in [
+    "chromadb", "chromadb.telemetry", "chromadb.config",
+    "chromadb.segment.impl", "chromadb.api",
+    "sentence_transformers", "httpx", "httpcore",
+    "urllib3", "onnxruntime",
+]:
+    logging.getLogger(noisy).setLevel(logging.WARNING)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# RATE LIMITER
-# =============================================================================
-limiter = Limiter(key_func=get_remote_address)
 
+# ── Lifespan ────────────────────────────────────────────────────────
 
-# =============================================================================
-# PAYLOAD SIZE MIDDLEWARE
-# =============================================================================
-class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_PAYLOAD_BYTES:
-            return JSONResponse(
-                status_code=413,
-                content={"detail": "Payload too large. Maximum allowed size is 1 MB."},
-            )
-        elif not content_length:
-            body = await request.body()
-            if len(body) > MAX_PAYLOAD_BYTES:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Payload too large. Maximum allowed size is 1 MB."},
-                )
-        return await call_next(request)
-
-
-# =============================================================================
-# INPUT SANITIZATION
-# =============================================================================
-def sanitize_text(text: str) -> str:
-    cleaned = bleach.clean(text, tags=[], attributes={}, strip=True)
-    return truncate_to_token_limit(cleaned)
-
-
-# =============================================================================
-# SCHEMAS
-# =============================================================================
-class ChatRequest(BaseModel):
-    session_id: Optional[str] = Field(None)
-    message:    str
-
-
-class ChatResponse(BaseModel):
-    session_id: str
-    response:   str
-    latency_ms: float
-    status:     str
-    turns_used: int
-    turns_max:  int
-
-
-class ResetRequest(BaseModel):
-    session_id: str
-
-
-# =============================================================================
-# MAIN ROUTER
-# =============================================================================
-router = APIRouter()
-
-
-# ---------------------------------------------------------------------------
-# WebSocket — /ws/chat
-# JWT passed as query param: ws://host/ws/chat?token=<jwt>&session_id=<uuid>
-# ---------------------------------------------------------------------------
-@router.websocket("/ws/chat")
-async def websocket_chat(
-    websocket: WebSocket,
-    token: Optional[str] = Query(default=None),
-):
-    # Auth: verify JWT before accepting
-    try:
-        user_payload = get_user_from_ws_token(token)
-        user_id      = user_payload["sub"]
-    except HTTPException:
-        await websocket.close(code=4001, reason="Unauthorized")
-        return
-
-    await websocket.accept()
-
-    # Session init: bind user_id, fetch CRM block once
-    session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
-    session = get_or_create_session(session_id, user_id=user_id)
-    # Force immediate persistence so the session appears in history sidebar right away
-    from src.conversation.memory import flush_session_to_db
-    flush_session_to_db(session_id)
-    
-
-    try:
-        while True:
-            message = await websocket.receive()
-
-            # ----- Binary (audio) frame -----
-            if "bytes" in message and message["bytes"]:
-                audio_bytes = message["bytes"]
-                if len(audio_bytes) > MAX_PAYLOAD_BYTES:
-                    await websocket.send_json({"event": "error", "detail": "Audio chunk too large."})
-                    continue
-                try:
-                    response_audio, user_text, assistant_text = await llm_engine.process_audio(
-                        session_id, audio_bytes
-                    )
-                    await websocket.send_bytes(response_audio)
-                    session = get_or_create_session(session_id)
-                    await websocket.send_json({
-                        "event":          "turn_complete",
-                        "session_id":     session_id,
-                        "status":         session["status"],
-                        "turns_used":     session["turns"],
-                        "turns_max":      MAX_TURNS,
-                        "user_text":      user_text,
-                        "assistant_text": assistant_text,
-                    })
-                except Exception as e:
-                    logger.error(f"[WS] Audio processing error: {e}")
-                    await websocket.send_json({"event": "error", "detail": str(e)})
-
-            # ----- Text (JSON) frame -----
-            elif "text" in message and message["text"]:
-                try:
-                    data = json.loads(message["text"])
-                except Exception:
-                    await websocket.send_json({"error": "Invalid JSON."})
-                    continue
-
-                raw_message = data.get("message", "").strip()
-                if not raw_message:
-                    await websocket.send_json({"error": "message field is required."})
-                    continue
-
-                user_message = sanitize_text(raw_message)
-
-                async for chunk in llm_engine.stream(session_id, user_message):
-                    await websocket.send_json(chunk)
-                    if chunk.get("done"):
-                        break
-
-    except WebSocketDisconnect:
-        # Persist session memory on disconnect
-        session = get_or_create_session(session_id)
-        try:
-            await db.save_session_memory(
-                session_id=session_id,
-                user_id=session.get("user_id", ""),
-                messages=session.get("history", []),
-                turn_count=session.get("turn_count", 0),
-            )
-        except Exception as e:
-            logger.warning(f"[WS] session_memory persist failed on disconnect: {e}")
-    except Exception as e:
-        logger.error(f"[WS] Unexpected error: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Chat (REST fallback)
-# ---------------------------------------------------------------------------
-@router.post("/chat", response_model=ChatResponse, tags=["Chat"])
-@limiter.limit("10/minute")
-async def chat(
-    request: Request,
-    body:    ChatRequest,
-    user:    dict = Depends(get_current_user),
-):
-    session_id = body.session_id or str(uuid.uuid4())
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty.")
-    user_message = sanitize_text(body.message)
-    # Bind user_id
-    get_or_create_session(session_id, user_id=user["sub"])
-    # Force immediate persistence
-    from src.conversation.memory import flush_session_to_db
-    flush_session_to_db(session_id)
-
-    result = await llm_engine.generate(session_id=session_id, user_message=user_message)
-    return ChatResponse(**result)
-
-
-# ---------------------------------------------------------------------------
-# Session endpoints
-# ---------------------------------------------------------------------------
-@router.get("/session/welcome/{session_id}", tags=["Session"])
-@limiter.limit("30/minute")
-async def welcome(request: Request, session_id: str):
-    logger.info(f"👋 [main] Generating welcome for session={session_id}")
-    return await get_welcome_message(session_id)
-
-
-@router.post("/reset", tags=["Session"])
-@limiter.limit("20/minute")
-async def reset(
-    request: Request,
-    body: ResetRequest,
-    user: dict = Depends(get_current_user),
-):
-    reset_session(body.session_id)
-    return {"message": f"Session '{body.session_id}' reset.", "status": "active"}
-
-
-@router.get("/sessions", tags=["Session"])
-@limiter.limit("30/minute")
-async def get_all_sessions(
-    request: Request,
-    user: dict = Depends(get_current_user),
-):
-    sessions = list_sessions(user_id=user["sub"])
-    logger.info(f"📋 [main] Listing {len(sessions)} sessions for user_id={user['sub']}")
-    return {"sessions": sessions}
-
-
-@router.get("/sessions/{session_id}", tags=["Session"])
-@limiter.limit("30/minute")
-async def get_session(
-    request: Request,
-    session_id: str,
-    user: dict = Depends(get_current_user),
-):
-    session = get_or_create_session(session_id)
-    return {
-        "session_id": session_id,
-        "history":    session["history"],
-        "state":      session["state"],
-        "turns":      session["turns"],
-        "status":     session["status"],
-        "turns_max":  MAX_TURNS,
-    }
-
-
-@router.delete("/sessions/{session_id}", tags=["Session"])
-@limiter.limit("20/minute")
-async def delete_session_endpoint(
-    request: Request,
-    session_id: str,
-    user: dict = Depends(get_current_user),
-):
-    reset_session(session_id)
-    success = db_delete_session(session_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    return {"message": f"Session '{session_id}' deleted."}
-
-
-# Health check (no auth — used by frontend to probe connectivity)
-@router.get("/health", tags=["System"])
-async def health():
-    return {"status": "ok", "active_sessions": len(list_active_sessions())}
-
-
-# Warmup route (triggers LLM/STT/TTS loading)
-@router.get("/warmup", tags=["System"])
-async def warmup():
-    """Warms up the engine by triggering lazy-loaded models."""
-    try:
-        await llm_engine.warmup()
-        return {"status": "warmed_up"}
-    except Exception as e:
-        logger.error(f"[main] Warmup failed: {e}")
-        return {"status": "error", "detail": str(e)}
-
-
-# =============================================================================
-# LIFESPAN
-# =============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Daraz Assistant starting up…")
-    # Run async DB init (new tables) then legacy sync init (existing tables)
+    # ── Startup ─────────────────────────────────────────────────────
+    t0 = time.time()
     await db.init_db()
-    init_sessions_from_db()
+    logger.info(f"[startup] Database ready ({time.time()-t0:.2f}s)")
+
+    t1 = time.time()
+    llm.startup()
+    logger.info(f"[startup] LLM engine ready ({time.time()-t1:.2f}s)")
+
+    # Auto-index ChromaDB if empty (run in background to not block startup)
+    def _bg_index():
+        try:
+            from retrieval.indexer import auto_index_if_needed
+            auto_index_if_needed()
+        except Exception as e:
+            logger.warning(f"[startup] Auto-index skipped: {e}")
+
+    asyncio.get_running_loop().run_in_executor(None, _bg_index)
+
+    logger.info(f"[startup] Total boot time: {time.time()-t0:.2f}s")
     yield
-    logger.info("🛑 Daraz Assistant shutting down…")
+
+    # ── Shutdown ────────────────────────────────────────────────────
+    llm.shutdown()
+    await db.close_db()
+    logger.info("[shutdown] Clean shutdown complete.")
 
 
-# =============================================================================
-# APP SETUP
-# =============================================================================
-app = FastAPI(title="Daraz Voice Assistant API", version="3.0.0", lifespan=lifespan)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(PayloadSizeLimitMiddleware)
-app.add_middleware(SlowAPIMiddleware)
+# ── App ─────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="Daraz AI Voice Assistant",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in FRONTEND_ORIGIN.split(",")],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(auth_router)     # /auth/*
-app.include_router(admin_router)    # /admin/*
-app.include_router(router)          # /chat, /ws/chat, /sessions/*, /health
+app.include_router(auth_router)
 
-# Frontend static files
-FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
-if os.path.isdir(FRONTEND_DIR):
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-    @app.get("/ui", tags=["Frontend"], include_in_schema=False)
-    async def serve_ui():
-        index = os.path.join(FRONTEND_DIR, "public", "index.html")
-        if os.path.exists(index):
-            return FileResponse(index)
-        old_index = os.path.join(FRONTEND_DIR, "index.html")
-        if os.path.exists(old_index):
-            return FileResponse(old_index)
-        return {"message": "Frontend index.html not found."}
+# ════════════════════════════════════════════════════════════════════
+#  SESSION MANAGEMENT
+# ════════════════════════════════════════════════════════════════════
+
+class CreateSessionRequest(BaseModel):
+    user_id: str
+    title: str = ""
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+
+
+@app.post("/sessions/create", response_model=SessionResponse)
+async def create_session(req: CreateSessionRequest):
+    logger.info(f"[sessions] Creating session for user {req.user_id}")
+    session_id = await db.create_session(req.user_id, req.title)
+    memory.register_session(session_id, req.user_id)
+    logger.info(f"[sessions] Created: {session_id}")
+    return SessionResponse(session_id=session_id)
+
+
+@app.get("/sessions")
+async def list_sessions(user_id: str = Query(...)):
+    logger.info(f"[sessions] Listing sessions for user {user_id}")
+    sessions = await db.get_sessions_for_user(user_id)
+    return {"sessions": sessions}
+
+
+@app.get("/sessions/{session_id}/history")
+async def get_session_history(session_id: str):
+    logger.info(f"[sessions] Loading history for {session_id}")
+    # Try RAM first, fall back to DB
+    history = memory.get_history(session_id)
+    if not history:
+        history = await db.get_messages(session_id)
+        if history:
+            memory.set_history(session_id, history)
+    logger.info(f"[sessions] Loaded {len(history)} messages")
+    return {"messages": history}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session_endpoint(session_id: str):
+    logger.info(f"[sessions] Deleting session {session_id}")
+    await db.delete_session(session_id)
+    return {"message": "Session deleted."}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  CHAT (WebSocket — streaming)
+#  Path: /ws/chat?session_id=X  (matches frontend expectation)
+# ════════════════════════════════════════════════════════════════════
+
+@app.websocket("/ws/chat")
+async def chat_ws(
+    ws: WebSocket,
+    session_id: str = Query(default=""),
+):
+    await ws.accept()
+    logger.info(f"[ws] Client connected (session_id from query: {session_id or 'none'})")
+
+    try:
+        while True:
+            data = await ws.receive_json()
+            # Support both formats:
+            # Frontend sends: {session_id, message}  or  {session_id, prompt, user_id}
+            sid = data.get("session_id") or session_id
+            prompt = data.get("message") or data.get("prompt", "")
+            prompt = prompt.strip()
+            user_id = data.get("user_id", "")
+
+            if not sid or not prompt:
+                await ws.send_json({"error": "session_id and message required"})
+                continue
+
+            t_start = time.time()
+            logger.info(f"[ws] ← user ({sid[:8]}): {prompt[:80]}...")
+
+            # Ensure session is registered in RAM
+            if not memory.get_session_owner(sid):
+                if user_id:
+                    memory.register_session(sid, user_id)
+                else:
+                    await ws.send_json({"error": "user_id required for new sessions"})
+                    continue
+
+            # Tool-calling callbacks for frontend indicator
+            async def on_tool_start():
+                await ws.send_json({"tool_status": "running", "tool_name": "Searching knowledge base & tools..."})
+
+            async def on_tool_done(ctx):
+                tools_used = []
+                if ctx:
+                    if "[Tool Output: Product Search]" in ctx:
+                        tools_used.append("Product Search")
+                    if "[Tool Output: Flash Deals]" in ctx:
+                        tools_used.append("Flash Deals")
+                    if "[Tool Output: Shipping]" in ctx:
+                        tools_used.append("Shipping")
+                    if "[Tool Output: Calculator]" in ctx:
+                        tools_used.append("Calculator")
+                    if "[Tool Output: Comparison]" in ctx:
+                        tools_used.append("Comparison")
+                    if "[Retrieved Knowledge Context]" in ctx:
+                        tools_used.append("Knowledge Base")
+                await ws.send_json({
+                    "tool_status": "done",
+                    "tools_used": tools_used or ["Knowledge Base"],
+                })
+
+            # Stream tokens
+            full_response = []
+            token_count = 0
+            t_first_token = None
+
+            async for token in llm.stream_chat(
+                sid, prompt,
+                on_tool_start=on_tool_start,
+                on_tool_done=on_tool_done,
+            ):
+                if t_first_token is None:
+                    t_first_token = time.time()
+                    ttft = (t_first_token - t_start) * 1000
+                    logger.info(f"[ws] TTFT: {ttft:.0f}ms")
+                await ws.send_json({"token": token})
+                full_response.append(token)
+                token_count += 1
+
+            total_time = (time.time() - t_start) * 1000
+            response_text = "".join(full_response)
+
+            # Signal end of response
+            await ws.send_json({
+                "done": True,
+                "full_response": response_text,
+                "latency_ms": round(total_time),
+            })
+
+            logger.info(
+                f"[ws] → assistant ({sid[:8]}): {token_count} tokens, "
+                f"{total_time:.0f}ms total, response: {response_text[:80]}..."
+            )
+
+    except WebSocketDisconnect:
+        logger.info("[ws] Client disconnected.")
+    except Exception as e:
+        logger.error(f"[ws] Error: {e}", exc_info=True)
+        try:
+            await ws.send_json({"error": str(e)})
+        except Exception:
+            pass
+
+
+# ════════════════════════════════════════════════════════════════════
+#  VOICE (non-streaming POST)
+# ════════════════════════════════════════════════════════════════════
+
+class VoiceRequest(BaseModel):
+    session_id: str
+    prompt: str
+    user_id: str = ""
+
+
+@app.post("/voice")
+async def voice_chat(req: VoiceRequest):
+    logger.info(f"[voice] Request for session {req.session_id}: {req.prompt[:60]}...")
+
+    if not req.session_id or not req.prompt.strip():
+        raise HTTPException(400, "session_id and prompt required.")
+
+    if not memory.get_session_owner(req.session_id) and req.user_id:
+        memory.register_session(req.session_id, req.user_id)
+
+    t0 = time.time()
+    response = await llm.generate_response(req.session_id, req.prompt.strip())
+    elapsed = (time.time() - t0) * 1000
+    logger.info(f"[voice] Response: {elapsed:.0f}ms, {len(response)} chars")
+
+    return {"response": response}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  WARMUP
+# ════════════════════════════════════════════════════════════════════
+
+@app.post("/warmup")
+async def warmup():
+    logger.info("[warmup] Starting model warmup...")
+    t0 = time.time()
+    result = await llm.warmup()
+    logger.info(f"[warmup] Done in {(time.time()-t0)*1000:.0f}ms")
+    return {"status": result}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  ADMIN (placeholder)
+# ════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/dashboard")
+async def admin_dashboard():
+    return {"message": "Admin dashboard placeholder.", "status": "ok"}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  HEALTH
+# ════════════════════════════════════════════════════════════════════
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ── Run with uvicorn if executed directly ───────────────────────────
+
+if __name__ == "__main__":
+    import uvicorn
+    from config import HOST, PORT
+    uvicorn.run("main:app", host=HOST, port=PORT, reload=False, workers=1)

@@ -1,38 +1,31 @@
 /* =============================================================================
-   index.css — "Souk Glass" Design System
+   index.css — Modern Dark Design System
    ============================================================================= */
 @import "tailwindcss";
 
 @theme {
-  --color-brand-fire: #F57224;
-  --color-brand-ember: #ff8c42;
-  --color-brand-deep: #0e0800;
-  --color-brand-coal: #1e1005;
-  --color-brand-smoke: #2e1e0d;
-  --color-brand-ash: #c4a882;
-  --color-brand-cream: #f5ede2;
-  --color-brand-glass: rgba(245, 114, 36, 0.07);
-  --color-brand-glass-border: rgba(245, 114, 36, 0.16);
+  --color-brand-primary: #F57224;
+  --color-brand-light: #ff8c42;
+  --color-brand-dark: #c85a1c;
+  --color-surface-0: #0a0a0a;
+  --color-surface-1: #111111;
+  --color-surface-2: #1a1a1a;
+  --color-surface-3: #242424;
+  --color-surface-4: #2e2e2e;
+  --color-text-primary: #f0f0f0;
+  --color-text-secondary: #9a9a9a;
+  --color-text-muted: #5a5a5a;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-hover: rgba(255, 255, 255, 0.14);
 }
 
 :root {
-  --brand-fire:      #F57224;
-  --brand-ember:     #ff8c42;
-  --brand-deep:      #0e0800;
-  --brand-coal:      #1e1005;
-  --brand-smoke:     #2e1e0d;
-  --brand-ash:       #c4a882;
-  --brand-cream:     #f5ede2;
-  --brand-glass:     rgba(245, 114, 36, 0.07);
-  --brand-glass-border: rgba(245, 114, 36, 0.16);
-
-  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
   color-scheme: dark;
-  color: var(--brand-cream);
-  background-color: var(--brand-deep);
+  color: #f0f0f0;
+  background-color: #0a0a0a;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -44,44 +37,13 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  overflow-x: hidden;
-  position: relative;
-  background: var(--brand-deep);
+  overflow: hidden;
+  background: #0a0a0a;
 }
 
-/* ── Rich multi-point ambient glow ── */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 70% 55% at 20% 15%, rgba(245, 114, 36, 0.10) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 40% at 80% 80%, rgba(255, 140, 66, 0.07) 0%, transparent 55%),
-    radial-gradient(ellipse 100% 80% at 50% 50%, rgba(245, 114, 36, 0.03) 0%, transparent 70%);
-}
-
-/* ── Noise Texture Overlay — low z-index so it doesn't block clicks ── */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-}
-
-/* Ensure all interactive content sits above the ambient layers */
 #root {
-  position: relative;
-  z-index: 2;
-}
-
-/* ── Typography ── */
-h1, h2, h3, .font-serif {
-  font-family: 'Fraunces', serif;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .font-mono {
@@ -90,8 +52,8 @@ h1, h2, h3, .font-serif {
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -99,74 +61,47 @@ h1, h2, h3, .font-serif {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--brand-smoke);
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--brand-fire);
-}
-
-/* ── Glassmorphism ── */
-.glass-card {
-  background: var(--brand-glass);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--brand-glass-border);
-}
-
-.glass-shadow {
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), 0 1px 0 rgba(245,114,36,0.06) inset;
+  background: rgba(245, 114, 36, 0.3);
 }
 
 /* ── Animations ── */
-@keyframes breathing {
-  0%, 100% { opacity: 0.35; }
-  50%       { opacity: 1; }
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.animate-breathing {
-  animation: breathing 2.4s ease-in-out infinite;
-}
-
-@keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 114, 36, 0.35); }
-  50%       { box-shadow: 0 0 22px 4px rgba(245, 114, 36, 0.15); }
-}
-
-.animate-glow-pulse {
-  animation: glow-pulse 2.2s infinite;
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-10px); }
-}
-
-.animate-float {
-  animation: float 5s ease-in-out infinite;
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 114, 36, 0.3); }
+  50%      { box-shadow: 0 0 16px 4px rgba(245, 114, 36, 0.1); }
 }
 
 @keyframes shimmer {
   0%   { background-position: -200% center; }
-  100% { background-position:  200% center; }
+  100% { background-position: 200% center; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite;
 }
 
 .shimmer-text {
-  background: linear-gradient(90deg, #F57224 0%, #ffd199 40%, #F57224 60%, #ff8c42 100%);
+  background: linear-gradient(90deg, #F57224 0%, #ffd199 45%, #F57224 55%, #ff8c42 100%);
   background-size: 200% auto;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  animation: shimmer 4s linear infinite;
+  animation: shimmer 3s linear infinite;
 }
 
-/* ── Orbit ring decoration ── */
-@keyframes spin-slow {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-.orbit-ring {
-  animation: spin-slow 18s linear infinite;
-}
+/* ── No scrollbar utility ── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
