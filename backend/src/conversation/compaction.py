@@ -146,10 +146,15 @@ def _run_auto_compaction_sync(session_id: str) -> None:
 # ── LAYER 4: CRM EXTRACTION ───────────────────────────────────────
 
 _CRM_PROMPT = (
-    "Extract NEW/UPDATED customer info from this exchange as JSON. "
-    "Fields: name, location, budget_range, preferred_categories (list), "
-    "preferred_brands (list), language_preference, notes. "
-    "If nothing new, return {{}}. New data overrides old.\n\n"
+    "You are a JSON extractor. Output ONLY a valid JSON object, no prose, no explanation.\n"
+    "Extract NEW or UPDATED customer info from this exchange.\n"
+    "Fields: name (str), location (str), budget_range (str), "
+    "preferred_categories (list of str), preferred_brands (list of str), "
+    "language_preference (str), "
+    "shipping_addresses (list of objects with: label, address, city, is_default bool), "
+    "notes (str).\n"
+    "If the user mentions a shipping address or delivery location, extract it.\n"
+    "If nothing new is present, output exactly: {{}}\n\n"
     "CURRENT CRM: {crm}\n\nUSER: {user_msg}\nASSISTANT: {asst_msg}\n\nJSON:"
 )
 
@@ -194,9 +199,15 @@ def _run_crm_extraction_sync(session_id: str) -> None:
             max_tokens=300,
         )
         raw = result["choices"][0]["message"]["content"].strip()
-        raw = re.sub(r"```json\s*", "", raw)
-        raw = re.sub(r"```\s*", "", raw)
-        updates = json.loads(raw)
+
+        # Extract JSON object from the raw response (model often wraps in prose)
+        import re as _re
+        json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if not json_match:
+            logger.info(f"[compaction] L4 CRM: no JSON object found in response. Raw: {raw[:200]}")
+            return
+
+        updates = json.loads(json_match.group(0))
         if isinstance(updates, dict) and updates:
             merged = merge_crm(current_crm, updates)
             memory.set_crm(user_id, merged)

@@ -21,7 +21,10 @@ PIPER_MODEL_PATH = os.getenv(
     "PIPER_MODEL_PATH",
     str(Path(MODELS_DIR) / "en_US-lessac-medium.onnx"),
 )
-MOONSHINE_MODEL = os.getenv("MOONSHINE_MODEL", "moonshine/base")
+# faster-whisper model name: "tiny", "base", "small", "medium"
+# "tiny" = ~40MB, fast on CPU; downloads automatically on first use to WHISPER_CACHE
+WHISPER_MODEL       = os.getenv("WHISPER_MODEL", "tiny")
+WHISPER_CACHE       = os.getenv("WHISPER_CACHE", str(Path(MODELS_DIR) / "whisper"))
 
 # ── LLM (llama.cpp) ────────────────────────────────────────────────
 LLM_MODEL_PATH = os.getenv(

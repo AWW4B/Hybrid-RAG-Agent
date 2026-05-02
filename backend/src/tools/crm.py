@@ -19,6 +19,7 @@ EMPTY_CRM: dict = {
     "preferred_categories": [],
     "preferred_brands": [],
     "language_preference": "",
+    "shipping_addresses": [],   # list of dicts: {label, address, city, is_default}
     "notes": "",
 }
 
@@ -28,7 +29,8 @@ def merge_crm(existing: dict, updates: dict) -> dict:
     Merge *updates* into *existing* CRM dict.
     Rules:
       - Scalar fields: new value replaces old (truthy wins).
-      - List fields: union (deduplicated, order preserved).
+      - List fields (except shipping_addresses): union (deduplicated, order preserved).
+      - shipping_addresses: merge by label or append new; mark is_default if specified.
       - Empty / None updates are ignored.
     """
     merged = {**EMPTY_CRM, **existing}
@@ -40,7 +42,36 @@ def merge_crm(existing: dict, updates: dict) -> dict:
 
         old_val = merged[key]
 
-        # List fields → union
+        # ── shipping_addresses: smart merge by label ────────────────
+        if key == "shipping_addresses":
+            if not isinstance(new_val, list):
+                continue
+            existing_addresses = merged.get("shipping_addresses", [])
+            existing_labels = {a.get("label", "").lower() for a in existing_addresses if isinstance(a, dict)}
+
+            for new_addr in new_val:
+                if not isinstance(new_addr, dict):
+                    continue
+                label = new_addr.get("label", "").lower()
+                if label and label in existing_labels:
+                    # Update existing entry
+                    for i, addr in enumerate(existing_addresses):
+                        if isinstance(addr, dict) and addr.get("label", "").lower() == label:
+                            existing_addresses[i] = {**addr, **new_addr}
+                else:
+                    existing_addresses.append(new_addr)
+                    if label:
+                        existing_labels.add(label)
+
+            # Enforce single default: last one marked wins
+            has_default = any(a.get("is_default") for a in existing_addresses if isinstance(a, dict))
+            if not has_default and existing_addresses:
+                existing_addresses[0]["is_default"] = True
+
+            merged["shipping_addresses"] = existing_addresses
+            continue
+
+        # ── Regular list fields → union ─────────────────────────────
         if isinstance(old_val, list):
             if isinstance(new_val, list):
                 seen = set(old_val)
@@ -53,7 +84,7 @@ def merge_crm(existing: dict, updates: dict) -> dict:
                     old_val.append(new_val)
             continue
 
-        # Scalar fields → replace if new value is truthy
+        # ── Scalar fields → replace if new value is truthy ─────────
         if new_val:
             merged[key] = new_val
 
@@ -82,6 +113,14 @@ def format_crm_block(crm: dict) -> str:
         lines.append(f"  Brands: {', '.join(crm['preferred_brands'])}")
     if crm.get("language_preference"):
         lines.append(f"  Language: {crm['language_preference']}")
+    if crm.get("shipping_addresses"):
+        addrs = crm["shipping_addresses"]
+        default = next((a for a in addrs if isinstance(a, dict) and a.get("is_default")), None)
+        if default:
+            parts = [v for k, v in default.items() if k not in ("is_default", "label") and v]
+            lines.append(f"  Default Ship-To ({default.get('label', 'home')}): {', '.join(parts)}")
+        if len(addrs) > 1:
+            lines.append(f"  Saved Addresses: {len(addrs)} total")
     if crm.get("notes"):
         lines.append(f"  Notes: {crm['notes']}")
 
