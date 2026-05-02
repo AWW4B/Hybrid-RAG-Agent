@@ -1,16 +1,19 @@
 // =============================================================================
 // src/components/InputBar.jsx
-// Modern text input + send button
+// Text input + mic button + send button
 // =============================================================================
 import { useState } from 'react'
 import { Send } from 'lucide-react'
 import { motion } from 'framer-motion'
+import VoiceMicButton from './VoiceMicButton.jsx'
 
-export default function InputBar({ onSend, disabled }) {
-  const [text, setText] = useState('')
+export default function InputBar({ onSend, disabled, micState, onStartRecording, onStopRecording }) {
+  const [text, setText]           = useState('')
   const [isFocused, setIsFocused] = useState(false)
 
-  const canSend = text.trim() && !disabled
+  const state     = micState || 'idle'
+  const isRecording = state === 'recording'
+  const canSend   = text.trim() && !disabled && state === 'idle'
 
   const handleSend = () => {
     if (!canSend) return
@@ -31,18 +34,44 @@ export default function InputBar({ onSend, disabled }) {
       bg-[#141414] border
       ${isFocused ? 'border-[#F57224]/30 ring-1 ring-[#F57224]/10' : 'border-white/[0.08]'}
     `}>
-      <input
-        id="chat-input"
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={handleKey}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
+      <VoiceMicButton
+        micState={state}
+        onStart={onStartRecording}
+        onStop={onStopRecording}
         disabled={disabled}
-        placeholder="Message Daraz AI..."
-        className="flex-1 bg-transparent outline-none text-[#f0f0f0] placeholder-[#5a5a5a] text-sm"
       />
+
+      <div className="flex-1 relative min-w-0">
+        {isRecording ? (
+          <div className="flex items-center gap-1.5 h-[22px]">
+            {[0, 1, 2, 3, 4].map(i => (
+              <motion.div
+                key={i}
+                animate={{ height: ['30%', '100%', '30%'] }}
+                transition={{ repeat: Infinity, duration: 0.45 + i * 0.1, ease: 'easeInOut' }}
+                className="w-[3px] bg-[#F57224] rounded-full"
+                style={{ minHeight: 3 }}
+              />
+            ))}
+            <span className="text-[11px] text-[#F57224] font-mono ml-2 animate-pulse tracking-wide">
+              Listening...
+            </span>
+          </div>
+        ) : (
+          <input
+            id="chat-input"
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKey}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            disabled={disabled || state !== 'idle'}
+            placeholder="Message Daraz AI..."
+            className="w-full bg-transparent outline-none text-[#f0f0f0] placeholder-[#5a5a5a] text-sm"
+          />
+        )}
+      </div>
 
       <motion.button
         id="send-btn"

@@ -6,11 +6,15 @@ Thread B (background): Fires the Brain LLM compaction engine AFTER streaming.
 Both NEVER run simultaneously — coordinated via asyncio.Lock.
 """
 
+import io
 import os
 import logging
 import asyncio
+import tempfile
+import threading
+import wave
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from llama_cpp import Llama
 
@@ -21,6 +25,8 @@ from config import (
     LLM_N_GPU_LAYERS,
     LLM_CHAT_TEMP,
     LLM_MAX_TOKENS_CHAT,
+    PIPER_MODEL_PATH,
+    MOONSHINE_MODEL,
 )
 from conversation import memory
 from conversation.compaction import run_background_compaction, init_compaction, get_llm_lock
@@ -67,6 +73,88 @@ def shutdown() -> None:
         _executor = None
     _llm = None
     logger.info("[llm] Shutdown complete.")
+
+
+# ════════════════════════════════════════════════════════════════════
+#  VOICE — STT (Moonshine) + TTS (Piper)
+# ════════════════════════════════════════════════════════════════════
+
+_tts_model = None
+_tts_lock  = threading.Lock()
+
+
+def _get_tts():
+    global _tts_model
+    if _tts_model is None:
+        with _tts_lock:
+            if _tts_model is None:
+                from piper import PiperVoice
+                logger.info(f"[voice] Loading Piper TTS: {PIPER_MODEL_PATH}")
+                _tts_model = PiperVoice.load(PIPER_MODEL_PATH)
+                logger.info("[voice] Piper TTS loaded.")
+    return _tts_model
+
+
+async def transcribe_audio(audio_bytes: bytes, session_id: str) -> str:
+    """Moonshine STT: audio bytes → transcript string."""
+    logger.info(f"[voice] STT called | session={session_id[:8]} | {len(audio_bytes)} bytes")
+
+    def _run() -> str:
+        import subprocess
+        import moonshine_onnx as moonshine
+
+        suffix = ".wav" if audio_bytes[:4] == b"RIFF" else ".webm"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            raw_path = tmp.name
+
+        wav_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wtmp:
+                wav_path = wtmp.name
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", raw_path, "-ac", "1", "-ar", "16000", wav_path],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            transcripts = moonshine.transcribe(wav_path, MOONSHINE_MODEL)
+            return " ".join(t.strip() for t in transcripts).strip()
+        finally:
+            for p in (raw_path, wav_path):
+                if p and os.path.exists(p):
+                    try: os.remove(p)
+                    except OSError: pass
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _run)
+
+
+async def synthesize_speech(text: str, session_id: str) -> bytes:
+    """Piper TTS: text → WAV audio bytes."""
+    tts = _get_tts()
+
+    def _run() -> bytes:
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(tts.config.sample_rate)
+            tts.synthesize(text, wf)
+        return buf.getvalue()
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _run)
+
+
+async def process_audio(session_id: str, audio_bytes: bytes) -> tuple[bytes, str, str]:
+    """Full voice pipeline: audio → STT → LLM → TTS → audio."""
+    user_text = await transcribe_audio(audio_bytes, session_id)
+    if not user_text.strip():
+        reply = "I didn't catch that — could you try again?"
+        return await synthesize_speech(reply, session_id), "", reply
+
+    assistant_text = await generate_response(session_id, user_text)
+    audio_response = await synthesize_speech(assistant_text, session_id)
+    return audio_response, user_text, assistant_text
 
 
 # ════════════════════════════════════════════════════════════════════

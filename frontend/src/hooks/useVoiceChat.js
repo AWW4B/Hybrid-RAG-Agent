@@ -1,7 +1,8 @@
 // =============================================================================
-// src/hooks/useChat.js
-// Chat state hook — WebSocket text streaming + session management.
-// Matched to new backend: /ws/chat, {session_id, message, user_id}
+// src/hooks/useVoiceChat.js
+// Chat + voice state — WebSocket streaming (text) and binary audio (voice).
+// Voice mode: MediaRecorder → binary WebM → backend STT→LLM→TTS → WAV back.
+// Text mode:  JSON frame → backend streams tokens back.
 // =============================================================================
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
@@ -13,27 +14,37 @@ import {
   deleteSession,
 } from '../utils/api.js'
 
+const MIME = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+  ? 'audio/webm;codecs=opus'
+  : 'audio/webm'
+
 export default function useChat({ user }) {
-  const [messages, setMessages]     = useState([])
-  const [isLoading, setIsLoading]   = useState(false)
-  const [sessionId, setSessionId]   = useState(null)
-  const [sessions, setSessions]     = useState([])
+  const [messages, setMessages]         = useState([])
+  const [isLoading, setIsLoading]       = useState(false)
+  const [sessionId, setSessionId]       = useState(null)
+  const [sessions, setSessions]         = useState([])
   const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [toolStatus, setToolStatus]     = useState(null)
+
+  // Voice state
+  const [micState, setMicState]         = useState('idle') // idle | requesting | recording | processing
+  const [isPlaying, setIsPlaying]       = useState(false)
+  const [voiceError, setVoiceError]     = useState(null)
 
   const wsRef       = useRef(null)
   const reconnTimer = useRef(null)
   const sessionRef  = useRef(null)
   const userRef     = useRef(user)
+  const recorderRef = useRef(null)
+  const streamRef   = useRef(null)
+  const audioRef    = useRef(null)
 
   useEffect(() => { userRef.current = user }, [user])
   useEffect(() => { sessionRef.current = sessionId }, [sessionId])
 
-  const [toolStatus, setToolStatus] = useState(null) // {status: 'running'|'done', name?, tools_used?}
-
   // ── WebSocket lifecycle ──────────────────────────────────────────
   const connect = useCallback((sid) => {
     if (!sid) return
-    // Close existing
     if (wsRef.current && wsRef.current.readyState < 2) {
       wsRef.current.close()
     }
@@ -45,9 +56,58 @@ export default function useChat({ user }) {
       clearTimeout(reconnTimer.current)
     }
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
+      // ── Binary frame = TTS audio (WAV) ──────────────────────────
+      if (event.data instanceof Blob) {
+        setIsPlaying(true)
+        const url = URL.createObjectURL(event.data)
+        const audio = new Audio(url)
+        audioRef.current = audio
+        audio.onended = () => { setIsPlaying(false); URL.revokeObjectURL(url) }
+        audio.onerror = () => { setIsPlaying(false); URL.revokeObjectURL(url) }
+        try { await audio.play() } catch { setIsPlaying(false) }
+        return
+      }
+
+      // ── Text frame = JSON control message ───────────────────────
       try {
         const msg = JSON.parse(event.data)
+
+        // Voice turn complete
+        if (msg.event === 'turn_complete') {
+          if (msg.user_text || msg.assistant_text) {
+            setMessages(prev => {
+              const updated = [...prev]
+              // Replace the voice placeholder with the actual transcript
+              const placeholderIdx = updated.findLastIndex(m => m.isVoicePlaceholder)
+              if (placeholderIdx !== -1) {
+                updated[placeholderIdx] = {
+                  ...updated[placeholderIdx],
+                  content: msg.user_text || '(Unintelligible audio)',
+                  isVoicePlaceholder: false,
+                }
+              }
+              if (msg.assistant_text) {
+                updated.push({
+                  role: 'assistant',
+                  content: msg.assistant_text,
+                  timestamp: new Date().toISOString(),
+                })
+              }
+              return updated
+            })
+          }
+          setMicState('idle')
+          setIsLoading(false)
+          return
+        }
+
+        if (msg.event === 'error') {
+          setVoiceError(msg.detail || 'An error occurred.')
+          setMicState('idle')
+          setIsLoading(false)
+          return
+        }
 
         if (msg.error) {
           console.error('[ws] Server error:', msg.error)
@@ -62,7 +122,6 @@ export default function useChat({ user }) {
             setToolStatus({ status: 'running', name: msg.tool_name || 'Processing...' })
           } else if (msg.tool_status === 'done') {
             setToolStatus({ status: 'done', tools_used: msg.tools_used || [] })
-            // Clear after a short delay so user sees the result
             setTimeout(() => setToolStatus(null), 2000)
           }
           return
@@ -70,7 +129,7 @@ export default function useChat({ user }) {
 
         // Streaming token
         if ('token' in msg && !msg.done) {
-          setToolStatus(null) // Clear tool status when tokens start
+          setToolStatus(null)
           setMessages(prev => {
             const last = prev[prev.length - 1]
             if (last && last.streaming) {
@@ -103,7 +162,7 @@ export default function useChat({ user }) {
           setIsLoading(false)
           return
         }
-      } catch { /* non-JSON, ignore */ }
+      } catch { /* non-JSON binary, ignore */ }
     }
 
     ws.onclose = () => {
@@ -122,7 +181,6 @@ export default function useChat({ user }) {
   useEffect(() => {
     if (!user?.user_id) return
 
-    // Load sessions and auto-create one if none exist
     const init = async () => {
       setSessionsLoading(true)
       try {
@@ -130,11 +188,9 @@ export default function useChat({ user }) {
         setSessions(s || [])
 
         if (s && s.length > 0) {
-          // Load most recent session
           const latest = s[0]
           setSessionId(latest.session_id)
           connect(latest.session_id)
-          // Load history
           try {
             const { messages: hist } = await getSessionHistory(latest.session_id)
             if (hist && hist.length > 0) {
@@ -158,7 +214,6 @@ export default function useChat({ user }) {
             }])
           }
         } else {
-          // Create first session
           const { session_id } = await createSession(user.user_id, 'New Chat')
           setSessionId(session_id)
           setSessions([{ session_id, title: 'New Chat', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }])
@@ -171,7 +226,6 @@ export default function useChat({ user }) {
         }
       } catch (e) {
         console.error('[useChat] Init failed:', e)
-        // Create a session anyway
         try {
           const { session_id } = await createSession(user.user_id, 'New Chat')
           setSessionId(session_id)
@@ -192,6 +246,8 @@ export default function useChat({ user }) {
     return () => {
       clearTimeout(reconnTimer.current)
       wsRef.current?.close()
+      recorderRef.current?.stop()
+      streamRef.current?.getTracks().forEach(t => t.stop())
     }
   }, [user?.user_id, connect])
 
@@ -207,11 +263,68 @@ export default function useChat({ user }) {
     sendTextMessage(wsRef.current, sessionRef.current, text, userRef.current.user_id)
   }, [])
 
+  // ── Voice: start recording ───────────────────────────────────────
+  const startRecording = useCallback(async () => {
+    if (micState !== 'idle') return
+    setMicState('requesting')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const recorder = new MediaRecorder(stream, { mimeType: MIME })
+      recorderRef.current = recorder
+
+      // Add voice placeholder message
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: '🎤 Voice message',
+        isVoicePlaceholder: true,
+        timestamp: new Date().toISOString(),
+      }])
+      setIsLoading(true)
+
+      const chunks = []
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+      recorder.onstop = () => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          const blob = new Blob(chunks, { type: MIME })
+          wsRef.current.send(blob)
+        }
+      }
+
+      recorder.start()
+      setMicState('recording')
+    } catch {
+      setVoiceError('Microphone access denied.')
+      setMicState('idle')
+    }
+  }, [micState])
+
+  // ── Voice: stop recording ────────────────────────────────────────
+  const stopRecording = useCallback(() => {
+    if (micState !== 'recording') return
+    recorderRef.current?.stop()
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    setMicState('processing')
+  }, [micState])
+
+  // ── Voice: stop TTS playback ─────────────────────────────────────
+  const stopSpeaking = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+      setIsPlaying(false)
+    }
+  }, [])
+
+  const clearVoiceError = useCallback(() => setVoiceError(null), [])
+
   // ── New chat ─────────────────────────────────────────────────────
   const newChat = useCallback(async () => {
     if (!userRef.current?.user_id) return
     setIsLoading(false)
     wsRef.current?.close()
+    stopSpeaking()
+    setMicState('idle')
 
     try {
       const { session_id } = await createSession(userRef.current.user_id, 'New Chat')
@@ -222,19 +335,20 @@ export default function useChat({ user }) {
         content: "Hi! I'm Daraz Assistant 🛍️ — fresh chat started. What are you looking for?",
         timestamp: new Date().toISOString(),
       }])
-      // Refresh sessions list
       const { sessions: s } = await getSessions(userRef.current.user_id)
       setSessions(s || [])
     } catch (e) {
       console.error('[useChat] New chat failed:', e)
     }
-  }, [connect])
+  }, [connect, stopSpeaking])
 
   // ── Load session ─────────────────────────────────────────────────
   const loadSession = useCallback(async (sid) => {
     if (!sid) return
     setIsLoading(false)
     wsRef.current?.close()
+    stopSpeaking()
+    setMicState('idle')
     setSessionId(sid)
     connect(sid)
 
@@ -260,14 +374,13 @@ export default function useChat({ user }) {
         timestamp: new Date().toISOString(),
       }])
     }
-  }, [connect])
+  }, [connect, stopSpeaking])
 
   // ── Delete session ───────────────────────────────────────────────
   const removeSession = useCallback(async (sid) => {
     try {
       await deleteSession(sid)
       setSessions(prev => prev.filter(s => s.session_id !== sid))
-      // If we deleted the current session, start a new one
       if (sid === sessionRef.current) {
         await newChat()
       }
@@ -292,10 +405,19 @@ export default function useChat({ user }) {
     sessionId,
     sessions,
     sessionsLoading,
+    // Voice
+    micState,
+    isPlaying,
+    voiceError,
+    // Actions
     send,
     newChat,
     loadSession,
     removeSession,
     refreshSessions,
+    startRecording,
+    stopRecording,
+    stopSpeaking,
+    clearVoiceError,
   }
 }

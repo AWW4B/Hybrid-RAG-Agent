@@ -16,6 +16,7 @@ Endpoints:
   GET    /health                   — liveness probe
 """
 
+import json
 import time
 import logging
 import asyncio
@@ -162,7 +163,34 @@ async def chat_ws(
 
     try:
         while True:
-            data = await ws.receive_json()
+            message = await ws.receive()
+
+            # ── Binary (audio) frame — voice pipeline ─────────────────
+            if "bytes" in message and message["bytes"]:
+                audio_bytes = message["bytes"]
+                sid = session_id
+                if not sid:
+                    await ws.send_json({"event": "error", "detail": "session_id required for voice."})
+                    continue
+                try:
+                    response_audio, user_text, assistant_text = await llm.process_audio(sid, audio_bytes)
+                    await ws.send_bytes(response_audio)
+                    await ws.send_json({
+                        "event":          "turn_complete",
+                        "session_id":     sid,
+                        "user_text":      user_text,
+                        "assistant_text": assistant_text,
+                    })
+                except Exception as e:
+                    logger.error(f"[ws] Audio processing error: {e}", exc_info=True)
+                    await ws.send_json({"event": "error", "detail": str(e)})
+                continue
+
+            # ── Text (JSON) frame — streaming chat ────────────────────
+            if "text" not in message or not message["text"]:
+                continue
+
+            data = json.loads(message["text"])
             # Support both formats:
             # Frontend sends: {session_id, message}  or  {session_id, prompt, user_id}
             sid = data.get("session_id") or session_id

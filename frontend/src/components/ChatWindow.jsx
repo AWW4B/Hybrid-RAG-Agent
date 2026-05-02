@@ -11,7 +11,7 @@ import InputBar from './InputBar.jsx'
 import ToolIndicator from './ToolIndicator.jsx'
 
 export default function ChatWindow({ chat, backendStatus }) {
-  const { messages, isLoading, toolStatus, send } = chat
+  const { messages, isLoading, toolStatus, send, micState, startRecording, stopRecording } = chat
   const bottomRef = useRef(null)
 
   // Auto-scroll to latest message
@@ -57,7 +57,13 @@ export default function ChatWindow({ chat, backendStatus }) {
       {/* Input bar + tool indicator — fixed at bottom */}
       <div className="flex-shrink-0 px-4 pb-4">
         <div className="max-w-2xl mx-auto">
-          <InputBar onSend={send} disabled={false} />
+          <InputBar
+            onSend={send}
+            disabled={false}
+            micState={micState}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+          />
           <ToolIndicator toolStatus={toolStatus} />
         </div>
       </div>

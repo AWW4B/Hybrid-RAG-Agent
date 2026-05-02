@@ -16,6 +16,13 @@ DATASET_DIR  = os.getenv("DOCS_DIR",    str(PROJECT_ROOT / "dataset"))
 CHROMA_DIR   = os.getenv("CHROMA_PATH", str(PROJECT_ROOT / "chroma_db"))
 DB_PATH      = os.getenv("DB_PATH",     str(BACKEND_ROOT / "app.db"))
 
+# ── Voice (STT / TTS) ──────────────────────────────────────────────
+PIPER_MODEL_PATH = os.getenv(
+    "PIPER_MODEL_PATH",
+    str(Path(MODELS_DIR) / "en_US-lessac-medium.onnx"),
+)
+MOONSHINE_MODEL = os.getenv("MOONSHINE_MODEL", "moonshine/base")
+
 # ── LLM (llama.cpp) ────────────────────────────────────────────────
 LLM_MODEL_PATH = os.getenv(
     "LLM_MODEL_PATH",
