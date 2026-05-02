@@ -1,385 +1,266 @@
-# =============================================================================
-# backend/src/db.py
-# Async database access layer. ALL SQL lives here — no raw SQL outside this module.
-# Uses aiosqlite for async access, compatible with FastAPI's async handlers.
-# =============================================================================
+"""
+db.py — Async SQLite database layer (WAL mode, zero-latency writes).
 
+Tables: users, sessions, messages, session_context, user_crm.
+Every public function is an async coroutine; the module manages its own
+connection pool via a single WAL-mode aiosqlite connection.
+"""
+
+import uuid
 import json
 import logging
-import os
-import uuid
-from datetime import datetime, timedelta, timezone
+import aiosqlite
+from datetime import datetime
 from typing import Optional
 
-import aiosqlite
+from config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# DB path — same data directory used by the legacy sync layer
-# ---------------------------------------------------------------------------
-_DB_DIR = os.getenv("DB_DIR", "/data")
-_DB_PATH = os.path.join(_DB_DIR, "sessions.db")
+# ── Module-level connection (initialized once at startup) ───────────
+_db: Optional[aiosqlite.Connection] = None
+
+
+async def init_db() -> None:
+    """Open the WAL-mode connection and create tables if they don't exist."""
+    global _db
+    _db = await aiosqlite.connect(DB_PATH)
+    _db.row_factory = aiosqlite.Row
+
+    # WAL + performance pragmas
+    await _db.execute("PRAGMA journal_mode=WAL")
+    await _db.execute("PRAGMA synchronous=NORMAL")
+    await _db.execute("PRAGMA cache_size=-8000")        # 8 MB page cache
+    await _db.execute("PRAGMA temp_store=MEMORY")
+    await _db.execute("PRAGMA mmap_size=67108864")       # 64 MB mmap
+
+    await _db.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id    TEXT PRIMARY KEY,
+            username   TEXT UNIQUE NOT NULL,
+            password   TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            title      TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role       TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS session_context (
+            session_id      TEXT PRIMARY KEY,
+            context_summary TEXT DEFAULT '',
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS user_crm (
+            user_id    TEXT PRIMARY KEY,
+            crm_json   TEXT DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+    """)
+    await _db.commit()
+    logger.info("[db] Database initialized (WAL mode).")
+
+
+async def close_db() -> None:
+    global _db
+    if _db:
+        await _db.close()
+        _db = None
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.utcnow().isoformat()
 
 
-async def _connect() -> aiosqlite.Connection:
-    os.makedirs(_DB_DIR, exist_ok=True)
-    conn = await aiosqlite.connect(_DB_PATH)
-    conn.row_factory = aiosqlite.Row
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+# ════════════════════════════════════════════════════════════════════
+#  USERS
+# ════════════════════════════════════════════════════════════════════
+
+async def create_user(username: str, password: str) -> str:
+    """Insert a new user and return user_id."""
+    user_id = uuid.uuid4().hex
+    await _db.execute(
+        "INSERT INTO users (user_id, username, password) VALUES (?, ?, ?)",
+        (user_id, username, password),
+    )
+    await _db.commit()
+    return user_id
 
 
-# =============================================================================
-# SCHEMA MIGRATION — adds new tables without dropping existing ones
-# =============================================================================
-async def init_db() -> None:
-    """Run once at startup. Safe to call repeatedly (IF NOT EXISTS guards)."""
-    conn = await _connect()
-    try:
-        # Migration: Add user_id column if it doesn't exist
-        try:
-            await conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
-            await conn.commit()
-            logger.info("[db] Added user_id column to sessions table.")
-        except Exception:
-            pass # Column already exists
-        
-        await conn.executescript("""
-            -- Existing tables (kept intact)
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id  TEXT PRIMARY KEY,
-                user_id     TEXT, -- Added for history isolation
-                title       TEXT DEFAULT 'New Chat',
-                state       TEXT DEFAULT '{}',
-                turns       INTEGER DEFAULT 0,
-                status      TEXT DEFAULT 'active',
-                created_at  TEXT NOT NULL,
-                updated_at  TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS messages (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id  TEXT NOT NULL,
-                role        TEXT NOT NULL,
-                content     TEXT NOT NULL,
-                timestamp   TEXT NOT NULL,
-                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-                    ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-
-            -- NEW: User accounts
-            CREATE TABLE IF NOT EXISTS users (
-                id               TEXT PRIMARY KEY,
-                username         TEXT UNIQUE NOT NULL,
-                email            TEXT UNIQUE NOT NULL,
-                password_hash    TEXT NOT NULL,
-                created_at       TEXT NOT NULL,
-                last_login       TEXT,
-                is_active        INTEGER DEFAULT 1,
-                is_admin         INTEGER DEFAULT 0,
-                failed_attempts  INTEGER DEFAULT 0,
-                locked_until     TEXT
-            );
-
-            -- NEW: Session memory (compacted message state)
-            CREATE TABLE IF NOT EXISTS session_memory (
-                session_id    TEXT PRIMARY KEY,
-                user_id       TEXT REFERENCES users(id) ON DELETE CASCADE,
-                messages_json TEXT NOT NULL,
-                turn_count    INTEGER DEFAULT 0,
-                last_active   TEXT NOT NULL,
-                created_at    TEXT NOT NULL
-            );
-
-            -- NEW: Compaction audit log
-            CREATE TABLE IF NOT EXISTS compaction_log (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id      TEXT,
-                user_id         TEXT,
-                compaction_type TEXT,
-                tokens_before   INTEGER,
-                tokens_after    INTEGER,
-                triggered_at    TEXT
-            );
-
-            -- NEW: Benchmark results
-            CREATE TABLE IF NOT EXISTS benchmark_results (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_at      TEXT NOT NULL,
-                test_name   TEXT NOT NULL,
-                metric      TEXT NOT NULL,
-                value       REAL NOT NULL,
-                session_id  TEXT,
-                notes       TEXT
-            );
-        """)
-        await conn.commit()
-        logger.info(f"[db] Schema initialized at {_DB_PATH}")
-    finally:
-        await conn.close()
-
-
-# =============================================================================
-# USER ACCOUNTS
-# =============================================================================
 async def get_user_by_username(username: str) -> Optional[dict]:
-    conn = await _connect()
-    try:
-        cursor = await conn.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        )
-        row = await cursor.fetchone()
-        return dict(row) if row else None
-    finally:
-        await conn.close()
+    cursor = await _db.execute(
+        "SELECT user_id, username, password FROM users WHERE username = ?",
+        (username,),
+    )
+    row = await cursor.fetchone()
+    if row:
+        return {"user_id": row["user_id"], "username": row["username"], "password": row["password"]}
+    return None
 
 
-async def get_user_by_id(user_id: str) -> Optional[dict]:
-    conn = await _connect()
-    try:
-        cursor = await conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        )
-        row = await cursor.fetchone()
-        return dict(row) if row else None
-    finally:
-        await conn.close()
+# ════════════════════════════════════════════════════════════════════
+#  SESSIONS
+# ════════════════════════════════════════════════════════════════════
 
-
-async def get_user_by_email(email: str) -> Optional[dict]:
-    conn = await _connect()
-    try:
-        cursor = await conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        )
-        row = await cursor.fetchone()
-        return dict(row) if row else None
-    finally:
-        await conn.close()
-
-
-async def create_user(username: str, email: str, password_hash: str) -> str:
-    """Creates a new user and returns their UUID."""
-    user_id = str(uuid.uuid4())
+async def create_session(user_id: str, title: str = "") -> str:
+    session_id = uuid.uuid4().hex
     now = _now()
-    conn = await _connect()
-    try:
-        await conn.execute(
-            """INSERT INTO users (id, username, email, password_hash, created_at, is_active)
-               VALUES (?, ?, ?, ?, ?, 1)""",
-            (user_id, username, email, password_hash, now),
-        )
-        await conn.commit()
-        return user_id
-    finally:
-        await conn.close()
+    await _db.execute(
+        "INSERT INTO sessions (session_id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (session_id, user_id, title, now, now),
+    )
+    # Also create the 1-to-1 context row
+    await _db.execute(
+        "INSERT INTO session_context (session_id, context_summary, updated_at) VALUES (?, '', ?)",
+        (session_id, now),
+    )
+    await _db.commit()
+    return session_id
 
 
-async def update_login_attempt(user_id: str, success: bool, max_attempts: int = 5, lockout_minutes: int = 15) -> None:
+async def get_sessions_for_user(user_id: str) -> list[dict]:
+    cursor = await _db.execute(
+        "SELECT session_id, title, created_at, updated_at FROM sessions WHERE user_id = ? ORDER BY updated_at DESC",
+        (user_id,),
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def touch_session(session_id: str) -> None:
+    """Update the updated_at timestamp."""
+    await _db.execute(
+        "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+        (_now(), session_id),
+    )
+    await _db.commit()
+
+
+async def delete_session(session_id: str) -> None:
+    """Delete a session and all its related data."""
+    await _db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+    await _db.execute("DELETE FROM session_context WHERE session_id = ?", (session_id,))
+    await _db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+    await _db.commit()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  MESSAGES
+# ════════════════════════════════════════════════════════════════════
+
+async def save_message(session_id: str, role: str, content: str) -> None:
+    await _db.execute(
+        "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+        (session_id, role, content, _now()),
+    )
+    await _db.commit()
+
+
+async def get_messages(session_id: str, limit: int = 200) -> list[dict]:
+    cursor = await _db.execute(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY message_id ASC LIMIT ?",
+        (session_id, limit),
+    )
+    rows = await cursor.fetchall()
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+# ════════════════════════════════════════════════════════════════════
+#  SESSION CONTEXT (compaction summaries)
+# ════════════════════════════════════════════════════════════════════
+
+async def get_session_context(session_id: str) -> str:
+    cursor = await _db.execute(
+        "SELECT context_summary FROM session_context WHERE session_id = ?",
+        (session_id,),
+    )
+    row = await cursor.fetchone()
+    return row["context_summary"] if row else ""
+
+
+async def update_session_context(session_id: str, summary: str) -> None:
+    await _db.execute(
+        "INSERT INTO session_context (session_id, context_summary, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(session_id) DO UPDATE SET context_summary = excluded.context_summary, updated_at = excluded.updated_at",
+        (session_id, summary, _now()),
+    )
+    await _db.commit()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  USER CRM
+# ════════════════════════════════════════════════════════════════════
+
+async def get_crm(user_id: str) -> dict:
+    cursor = await _db.execute(
+        "SELECT crm_json FROM user_crm WHERE user_id = ?",
+        (user_id,),
+    )
+    row = await cursor.fetchone()
+    if row and row["crm_json"]:
+        try:
+            return json.loads(row["crm_json"])
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+async def upsert_crm(user_id: str, crm_data: dict) -> None:
+    await _db.execute(
+        "INSERT INTO user_crm (user_id, crm_json, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET crm_json = excluded.crm_json, updated_at = excluded.updated_at",
+        (user_id, json.dumps(crm_data, ensure_ascii=False), _now()),
+    )
+    await _db.commit()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  BULK LOAD (login hook)
+# ════════════════════════════════════════════════════════════════════
+
+async def load_user_context_bulk(user_id: str) -> dict:
     """
-    On success: resets failed_attempts, sets last_login, clears locked_until.
-    On failure: increments failed_attempts; locks account if threshold reached.
+    Called once on login.  Returns everything needed to hydrate the RAM cache:
+    {
+        "crm": {...},
+        "sessions": [
+            {"session_id": "...", "title": "...", "context_summary": "..."},
+            ...
+        ]
+    }
     """
-    conn = await _connect()
-    try:
-        if success:
-            await conn.execute(
-                """UPDATE users SET failed_attempts = 0, last_login = ?, locked_until = NULL
-                   WHERE id = ?""",
-                (_now(), user_id),
-            )
-        else:
-            # Atomically increment and conditionally set lock
-            cursor = await conn.execute(
-                "SELECT failed_attempts FROM users WHERE id = ?", (user_id,)
-            )
-            row = await cursor.fetchone()
-            current = (row["failed_attempts"] if row else 0) + 1
-            locked_until = None
-            if current >= max_attempts:
-                locked_until = (
-                    datetime.now(timezone.utc) + timedelta(minutes=lockout_minutes)
-                ).isoformat()
-            await conn.execute(
-                "UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?",
-                (current, locked_until, user_id),
-            )
-        await conn.commit()
-    finally:
-        await conn.close()
+    crm = await get_crm(user_id)
 
+    cursor = await _db.execute(
+        """
+        SELECT s.session_id, s.title, COALESCE(sc.context_summary, '') AS context_summary
+        FROM sessions s
+        LEFT JOIN session_context sc ON s.session_id = sc.session_id
+        WHERE s.user_id = ?
+        ORDER BY s.updated_at DESC
+        """,
+        (user_id,),
+    )
+    rows = await cursor.fetchall()
+    sessions = [
+        {"session_id": r["session_id"], "title": r["title"], "context_summary": r["context_summary"]}
+        for r in rows
+    ]
 
-async def unlock_user(user_id: str) -> None:
-    """Admin action: clear lockout and reset failed attempts."""
-    conn = await _connect()
-    try:
-        await conn.execute(
-            "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?",
-            (user_id,),
-        )
-        await conn.commit()
-    finally:
-        await conn.close()
-
-
-async def list_users(page: int = 1, page_size: int = 20) -> list[dict]:
-    conn = await _connect()
-    offset = (page - 1) * page_size
-    try:
-        cursor = await conn.execute(
-            """SELECT u.id, u.username, u.email, u.created_at, u.last_login,
-                      u.is_active, u.is_admin, u.failed_attempts, u.locked_until
-               FROM users u
-               ORDER BY u.created_at DESC
-               LIMIT ? OFFSET ?""",
-            (page_size, offset),
-        )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        await conn.close()
-
-
-
-# =============================================================================
-# SESSION MEMORY (compacted state persistence)
-# =============================================================================
-async def save_session_memory(
-    session_id: str, user_id: str, messages: list, turn_count: int
-) -> None:
-    # BUGFIX: Only persist to SQLite if there's actual conversation context
-    if not messages:
-        return
-
-    now = _now()
-    conn = await _connect()
-    try:
-        await conn.execute(
-            """INSERT INTO session_memory (session_id, user_id, messages_json, turn_count, last_active, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(session_id) DO UPDATE SET
-                user_id       = excluded.user_id,
-                messages_json = excluded.messages_json,
-                turn_count    = excluded.turn_count,
-                last_active   = excluded.last_active
-            """,
-            (session_id, user_id, json.dumps(messages), turn_count, now, now),
-        )
-        await conn.commit()
-    except Exception as e:
-        logger.error(f"[db] save_session_memory failed for {session_id}: {e}")
-    finally:
-        await conn.close()
-
-
-async def load_session_memory(session_id: str) -> Optional[dict]:
-    conn = await _connect()
-    try:
-        cursor = await conn.execute(
-            "SELECT * FROM session_memory WHERE session_id = ?", (session_id,)
-        )
-        row = await cursor.fetchone()
-        if not row:
-            return None
-        return {
-            "session_id": row["session_id"],
-            "user_id":    row["user_id"],
-            "messages":   json.loads(row["messages_json"]),
-            "turn_count": row["turn_count"],
-            "last_active": row["last_active"],
-        }
-    except Exception as e:
-        logger.error(f"[db] load_session_memory failed for {session_id}: {e}")
-        return None
-    finally:
-        await conn.close()
-
-
-# =============================================================================
-# COMPACTION LOG
-# =============================================================================
-async def log_compaction(
-    session_id: str,
-    user_id: str,
-    comp_type: str,     # 'auto' | 'micro' | 'extraction'
-    tokens_before: int,
-    tokens_after: int,
-) -> None:
-    conn = await _connect()
-    try:
-        await conn.execute(
-            """INSERT INTO compaction_log
-               (session_id, user_id, compaction_type, tokens_before, tokens_after, triggered_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (session_id, user_id, comp_type, tokens_before, tokens_after, _now()),
-        )
-        await conn.commit()
-    except Exception as e:
-        logger.error(f"[db] log_compaction failed: {e}")
-    finally:
-        await conn.close()
-
-
-async def get_compaction_stats(hours: int = 24) -> dict:
-    """Returns counts and averages for the admin dashboard."""
-    conn = await _connect()
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-        cursor = await conn.execute(
-            """SELECT compaction_type,
-                      COUNT(*) as count,
-                      AVG(tokens_before) as avg_before,
-                      AVG(tokens_after) as avg_after
-               FROM compaction_log
-               WHERE triggered_at >= ?
-               GROUP BY compaction_type""",
-            (since,),
-        )
-        rows = await cursor.fetchall()
-        return {r["compaction_type"]: dict(r) for r in rows}
-    finally:
-        await conn.close()
-
-
-# =============================================================================
-# BENCHMARK RESULTS
-# =============================================================================
-async def insert_benchmark(
-    test_name: str,
-    metric: str,
-    value: float,
-    session_id: Optional[str] = None,
-    notes: str = "",
-) -> None:
-    conn = await _connect()
-    try:
-        await conn.execute(
-            """INSERT INTO benchmark_results (run_at, test_name, metric, value, session_id, notes)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (_now(), test_name, metric, value, session_id, notes),
-        )
-        await conn.commit()
-    except Exception as e:
-        logger.error(f"[db] insert_benchmark failed: {e}")
-    finally:
-        await conn.close()
-
-
-async def get_benchmark_history(limit: int = 100) -> list[dict]:
-    conn = await _connect()
-    try:
-        cursor = await conn.execute(
-            "SELECT * FROM benchmark_results ORDER BY run_at DESC LIMIT ?", (limit,)
-        )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        await conn.close()
+    return {"crm": crm, "sessions": sessions}

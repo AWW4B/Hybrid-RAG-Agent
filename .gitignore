@@ -20,6 +20,10 @@ parts/
 sdist/
 var/
 wheels/
+# Models (Include folder but not contents)
+models/*
+!models/.gitkeep
+
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -213,7 +217,9 @@ frontend/dist/
 frontend/.vite/
 
 # Models (large binary files — add manually outside git)
-models/
+# Models
+# (Handled above)
+
 
 # SQLite DB
 data/

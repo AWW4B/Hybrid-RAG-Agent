@@ -1,54 +1,34 @@
 // =============================================================================
 // src/hooks/useAuth.js
-// JWT authentication state.
-// Cookie is HttpOnly (set by backend) for browser security.
-// The raw token is also stored in state so the WebSocket can use it as a
-// query param (since WebSocket does not send cookies on some browsers).
+// Simple auth state — no JWT, no refresh tokens.
+// Stores user_id + username in sessionStorage.
 // =============================================================================
 import { useState, useEffect, useCallback } from 'react'
-import { login as apiLogin, logout as apiLogout, refreshToken, healthCheck } from '../utils/api.js'
+import { login as apiLogin, logout as apiLogout } from '../utils/api.js'
 
 export default function useAuth() {
-  // 'unknown' | 'authenticated' | 'unauthenticated'
-  const [authState,  setAuthState]  = useState('unknown')
-  const [authError,  setAuthError]  = useState(null)
-  const [isLoading,  setIsLoading]  = useState(false)
-  const [token,      setToken]      = useState(null)   // raw JWT for WS query param
-  const [isAdmin,    setIsAdmin]    = useState(false)  // decoded from JWT payload
-  const [user,       setUser]       = useState(null)   // { username, name }
+  const [authState, setAuthState]  = useState('unknown')  // 'unknown' | 'authenticated' | 'unauthenticated'
+  const [authError, setAuthError]  = useState(null)
+  const [isLoading, setIsLoading]  = useState(false)
+  const [user, setUser]            = useState(null)        // { user_id, username }
+  const [isAdmin, setIsAdmin]      = useState(false)
 
-  // Decode admin flag from JWT without verifying signature (server always verifies)
-  const _decodeAdmin = (jwt) => {
-    try {
-      const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-      return !!payload.admin
-    } catch { return false }
-  }
-
-  // Rehydrate token from httpOnly cookie on mount by calling /auth/refresh.
-  // This also validates the session — 401 means logged out, any other response = authenticated.
+  // Rehydrate from sessionStorage on mount
   useEffect(() => {
-    let cancelled = false
-    refreshToken()
-      .then((data) => {
-        if (cancelled) return
-        const jwt = data?.access_token || null
-        setToken(jwt)
-        setUser({ username: data?.username, name: data?.name })
-        if (jwt) sessionStorage.setItem('auth_token', jwt)
-        setIsAdmin(jwt ? _decodeAdmin(jwt) : false)
+    const stored = sessionStorage.getItem('user')
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        setUser(parsed)
+        setIsAdmin(parsed.username === 'admin')
         setAuthState('authenticated')
-      })
-      .catch((err) => {
-        if (cancelled) return
-        if (err?.status === 401 || err?.status === 403) {
-          setAuthState('unauthenticated')
-        } else {
-          // Backend offline or network error — allow bypass for dev
-          setAuthState('unauthenticated')
-        }
-      })
-    return () => { cancelled = true }
+      } catch {
+        sessionStorage.removeItem('user')
+        setAuthState('unauthenticated')
+      }
+    } else {
+      setAuthState('unauthenticated')
+    }
   }, [])
 
   const login = useCallback(async (username, password) => {
@@ -56,16 +36,14 @@ export default function useAuth() {
     setAuthError(null)
     try {
       const data = await apiLogin(username, password)
-      // data.access_token is also returned in the response body
-      const jwt = data?.access_token || null
-      setToken(jwt)
-      setUser({ username: data?.username, name: data?.name })
-      if (jwt) sessionStorage.setItem('auth_token', jwt)
-      setIsAdmin(jwt ? _decodeAdmin(jwt) : false)
+      const userData = { user_id: data.user_id, username: data.username }
+      setUser(userData)
+      setIsAdmin(data.username === 'admin')
+      sessionStorage.setItem('user', JSON.stringify(userData))
       setAuthState('authenticated')
       return data
     } catch (err) {
-      setAuthError(err.message || 'Login failed. Check your credentials.')
+      setAuthError(err.message || 'Login failed.')
       throw err
     } finally {
       setIsLoading(false)
@@ -73,25 +51,12 @@ export default function useAuth() {
   }, [])
 
   const doLogout = useCallback(async () => {
-    await apiLogout().catch(() => {})
-    sessionStorage.removeItem('auth_token')
+    await apiLogout()
+    sessionStorage.removeItem('user')
     setAuthState('unauthenticated')
-    setToken(null)
     setUser(null)
     setIsAdmin(false)
   }, [])
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await refreshToken()
-      setUser({ username: data?.username, name: data?.name })
-    } catch {
-      setAuthState('unauthenticated')
-      setToken(null)
-      setUser(null)
-      setIsAdmin(false)
-    }
-  }, [])
-
-  return { authState, authError, isLoading, token, isAdmin, user, login, logout: doLogout, refresh }
+  return { authState, authError, isLoading, user, isAdmin, login, logout: doLogout }
 }
