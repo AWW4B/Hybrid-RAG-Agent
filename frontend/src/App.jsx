@@ -1,196 +1,140 @@
 // =============================================================================
 // src/App.jsx
-// Root component — handles auth state, mode switching (widget / fullpage / admin)
+// Root — handles auth state, renders Login or Chat layout directly
 // =============================================================================
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ShoppingBag, Maximize2, Minimize2, LogOut, BarChart2 } from 'lucide-react'
+import { LogOut, Plus, PanelLeftClose, PanelLeft, ShoppingBag } from 'lucide-react'
 import useAuth from './hooks/useAuth.js'
+import useChat from './hooks/useVoiceChat.js'
 import LoginPage from './components/LoginPage.jsx'
-import ChatWidget from './components/ChatWidget.jsx'
-import FullPageChat from './components/FullPageChat.jsx'
-import AdminDashboard from './components/AdminDashboard.jsx'
+import ChatWindow from './components/ChatWindow.jsx'
+import SessionSidebar from './components/SessionSidebar.jsx'
 import { healthCheck } from './utils/api.js'
+import './App.css'
 
 export default function App() {
-  const { authState, authError, isLoading, isAdmin, token, login, logout } = useAuth()
-  const [mode, setMode]                   = useState('widget')    // 'widget' | 'fullpage' | 'admin'
-  const [backendStatus, setBackendStatus] = useState('checking')  // 'checking' | 'online' | 'offline'
+  const { authState, authError, isLoading, user, isAdmin, login, logout } = useAuth()
+  const [backendStatus, setBackendStatus] = useState('checking')
+  const [sidebarOpen, setSidebarOpen]     = useState(true)
 
-  // Poll backend health on mount
+  // Poll backend health
   useEffect(() => {
     healthCheck()
       .then(() => setBackendStatus('online'))
       .catch(() => setBackendStatus('offline'))
   }, [])
 
-  // ── Loading spinner ──────────────────────────────────────────────────────
+  // Loading state
   if (authState === 'unknown') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f5f5f5]">
-        <div className="w-12 h-12 rounded-full border-4 border-[#F57224] border-t-transparent animate-spin" />
+      <div className="h-screen flex items-center justify-center bg-[#0a0a0a]">
+        <div className="w-10 h-10 rounded-full border-[3px] border-[#F57224] border-t-transparent animate-spin" />
       </div>
     )
   }
 
-  // ── Login / Register ─────────────────────────────────────────────────────
+  // Login
   if (authState === 'unauthenticated') {
     return <LoginPage onLogin={login} error={authError} isLoading={isLoading} />
   }
 
-  // ── Admin Dashboard ──────────────────────────────────────────────────────
-  if (mode === 'admin') {
-    return <AdminDashboard onClose={() => setMode('widget')} />
-  }
+  // Chat layout
+  return <ChatLayout user={user} logout={logout} backendStatus={backendStatus} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+}
 
-  // ── Full-page chat ────────────────────────────────────────────────────────
-  if (mode === 'fullpage') {
-    return (
-      <div className="relative">
-        <FullPageChat backendStatus={backendStatus} token={token} />
-        <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-          <motion.button
-            id="switch-widget-btn"
-            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            onClick={() => setMode('widget')}
-            className="flex items-center gap-2 px-3 py-2 rounded-full
-                       bg-white shadow-md text-sm text-gray-600 hover:text-[#F57224] border border-gray-200"
-          >
-            <Minimize2 size={14} /> Widget
-          </motion.button>
+function ChatLayout({ user, logout, backendStatus, sidebarOpen, setSidebarOpen }) {
+  const chat = useChat({ user })
 
-          {isAdmin && (
-            <motion.button
-              whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-              onClick={() => setMode('admin')}
-              className="flex items-center gap-2 px-3 py-2 rounded-full
-                         bg-white shadow-md text-sm text-[#F57224] border border-orange-200"
-            >
-              <BarChart2 size={14} /> Admin
-            </motion.button>
-          )}
-
-          <motion.button
-            onClick={logout}
-            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            className="flex items-center gap-2 px-3 py-2 rounded-full
-                       bg-white shadow-md text-sm text-red-600 hover:text-red-700 border border-red-100"
-          >
-            <LogOut size={14} /> Logout
-          </motion.button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Widget mode (landing page + FAB) ─────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#f5f5f5]">
-      {/* Nav bar */}
-      <header className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-100 shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #F57224, #ff8c42)' }}>
-            <ShoppingBag size={16} className="text-white" />
-          </div>
-          <span className="font-bold text-gray-800">Daraz Assistant</span>
+    <div className="h-screen flex bg-[#0a0a0a] overflow-hidden">
+      {/* Sidebar */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.div
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 280, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="flex-shrink-0 overflow-hidden border-r border-white/[0.06]"
+          >
+            <SessionSidebar
+              sessions={chat.sessions}
+              currentSessionId={chat.sessionId}
+              onLoadSession={chat.loadSession}
+              onNewChat={chat.newChat}
+              onDeleteSession={chat.removeSession}
+              onRefresh={chat.refreshSessions}
+              loading={chat.sessionsLoading}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-          {/* Backend status pill */}
-          <div className="flex items-center gap-1.5 ml-2">
-            <span className={`w-2 h-2 rounded-full ${
-              backendStatus === 'online'  ? 'bg-green-400' :
-              backendStatus === 'offline' ? 'bg-red-400'   : 'bg-yellow-400'
+      {/* Main chat area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
+        <header className="flex items-center gap-3 px-4 h-14 border-b border-white/[0.06] bg-[#0a0a0a] flex-shrink-0 z-20">
+          <button
+            onClick={() => setSidebarOpen(v => !v)}
+            className="p-2 rounded-lg hover:bg-white/[0.06] text-[#9a9a9a] hover:text-white transition"
+            title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+          >
+            {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
+          </button>
+
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #F57224, #ff6b35)' }}>
+              <ShoppingBag size={14} className="text-white" />
+            </div>
+            <span className="text-sm font-semibold text-[#f0f0f0]">Daraz AI</span>
+          </div>
+
+          {/* Status dot */}
+          <div className="flex items-center gap-1.5 ml-1">
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              backendStatus === 'online' ? 'bg-emerald-400' :
+              backendStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400'
             }`} />
-            <span className="text-xs text-gray-400 capitalize">{backendStatus}</span>
+            <span className="text-[10px] text-[#5a5a5a] font-medium capitalize">{backendStatus}</span>
           </div>
 
           <div className="flex-1" />
 
-          <motion.button
-            id="open-fullchat-btn"
-            whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-            onClick={() => setMode('fullpage')}
-            className="flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium text-white shadow"
-            style={{ background: 'linear-gradient(135deg, #F57224, #ff8c42)' }}
+          {/* New chat button */}
+          <button
+            onClick={chat.newChat}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       text-[#9a9a9a] hover:text-white hover:bg-white/[0.06] transition"
           >
-            <Maximize2 size={14} /> Open Full Chat
-          </motion.button>
+            <Plus size={14} /> New Chat
+          </button>
 
-          {/* Admin button — only for users with admin JWT claim */}
-          {isAdmin && (
-            <motion.button
-              id="open-admin-btn"
-              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-              onClick={() => setMode('admin')}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium
-                         text-[#F57224] border border-orange-200 hover:bg-orange-50 transition"
-            >
-              <BarChart2 size={14} /> Admin
-            </motion.button>
+          {/* User chip */}
+          {user?.username && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+              <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#F57224] to-[#ff6b35] flex items-center justify-center">
+                <span className="text-[9px] font-bold text-white uppercase">{user.username[0]}</span>
+              </div>
+              <span className="text-xs text-[#9a9a9a] font-medium">{user.username}</span>
+            </div>
           )}
 
-          <motion.button
+          <button
             onClick={logout}
-            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium
-                       text-red-600 hover:bg-red-50 transition border border-red-100"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       text-red-400/70 hover:text-red-400 hover:bg-red-500/[0.06] transition"
           >
-            <LogOut size={14} /> Logout
-          </motion.button>
+            <LogOut size={13} /> Logout
+          </button>
+        </header>
+
+        {/* Chat window */}
+        <div className="flex-1 min-h-0">
+          <ChatWindow chat={chat} backendStatus={backendStatus} />
         </div>
-      </header>
-
-      {/* Hero section */}
-      <main className="pt-14 flex flex-col items-center justify-center min-h-screen px-6">
-        <AnimatePresence>
-          <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center max-w-xl"
-          >
-            <motion.div
-              initial={{ scale: 0.8 }} animate={{ scale: 1 }}
-              className="w-24 h-24 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl"
-              style={{ background: 'linear-gradient(135deg, #F57224, #ff8c42)' }}
-            >
-              <ShoppingBag size={48} className="text-white" />
-            </motion.div>
-
-            <h1 className="text-4xl font-extrabold text-gray-800 mb-3">
-              Daraz <span style={{ color: '#F57224' }}>Voice</span> Assistant
-            </h1>
-            <p className="text-gray-500 text-lg mb-8">
-              Your AI‑powered shopping guide. Ask anything — or just talk to it!
-            </p>
-
-            <div className="flex flex-wrap justify-center gap-3 mb-8">
-              {[
-                { icon: '🎙️', label: 'Voice to Voice' },
-                { icon: '⚡', label: 'Sub-second Latency' },
-                { icon: '🔒', label: 'Private & Local' },
-                { icon: '🧠', label: 'Remembers You' },
-              ].map(({ icon, label }) => (
-                <span key={label}
-                  className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm
-                             border border-gray-100 text-sm text-gray-600 font-medium">
-                  {icon} {label}
-                </span>
-              ))}
-            </div>
-
-            <p className="text-sm text-gray-400">
-              👇 Open the chat widget below, or click{' '}
-              <button onClick={() => setMode('fullpage')} className="text-[#F57224] underline font-medium">
-                Full Chat
-              </button>{' '}
-              for a larger experience.
-            </p>
-          </motion.div>
-        </AnimatePresence>
-      </main>
-
-      {/* Floating chat widget */}
-      <ChatWidget backendStatus={backendStatus} token={token} />
+      </div>
     </div>
   )
 }

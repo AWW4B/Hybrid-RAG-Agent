@@ -1,8 +1,8 @@
-Title: Product_18
+Title: Orient Advanced Skin Care Serum
 Category: Beauty > Skincare
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_18 by Orient is a high-quality item in our Beauty collection.
+Content: The Orient Advanced Skin Care Serum by Orient is a high-quality item in our Beauty collection.
 Detailed Sentiment: Users rate this 3.3/5 based on 614 reviews.
 Deal Alert: Currently on sale for 183,295 PKR (Save 4%).
 ---

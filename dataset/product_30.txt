@@ -1,8 +1,8 @@
-Title: Product_30
+Title: Haier Men's Athletic Shoes
 Category: Shoes > Men Shoes
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_30 by Haier is a high-quality item in our Shoes collection.
+Content: The Haier Men's Athletic Shoes by Haier is a high-quality item in our Shoes collection.
 Detailed Sentiment: Users rate this 4.4/5 based on 955 reviews.
 Deal Alert: Currently on sale for 35,680 PKR (Save 50%).
 ---

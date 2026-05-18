@@ -83,16 +83,6 @@ class TestMicroCompact:
         assert result[2]["name"] == "retrieve_documents"
         assert result[2]["tool_call_id"] == "tc1"
 
-    def test_clears_consumed_crm_tool_result(self):
-        """get_crm_profile results should also be cleared."""
-        messages = [
-            {"role": "tool", "name": "get_crm_profile", "tool_call_id": "tc2",
-             "content": '{"name": "Ali", "preferred_categories": ["phones"]}'},
-            {"role": "assistant", "content": "I see you prefer phones."},
-        ]
-        result = micro_compact(messages)
-        assert result[0]["content"] == CLEARED_PLACEHOLDER
-
     def test_does_not_clear_unconsumed_tool_result(self):
         """Tool result with no subsequent assistant message must NOT be cleared."""
         messages = [
@@ -104,16 +94,6 @@ class TestMicroCompact:
         ]
         result = micro_compact(messages)
         assert result[1]["content"] == "Important live data", "Unconsumed result must not be cleared"
-
-    def test_non_compactable_tool_not_touched(self):
-        """Tools not in MICRO_COMPACTABLE_TOOLS must not have their content cleared."""
-        messages = [
-            {"role": "tool", "name": "update_crm_profile", "tool_call_id": "tc4",
-             "content": "Updated successfully"},
-            {"role": "assistant", "content": "Done."},
-        ]
-        result = micro_compact(messages)
-        assert result[0]["content"] == "Updated successfully"
 
     def test_already_cleared_not_double_cleared(self):
         """Messages already bearing CLEARED_PLACEHOLDER must not be re-processed."""

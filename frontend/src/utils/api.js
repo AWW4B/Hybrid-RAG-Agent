@@ -1,12 +1,8 @@
 // =============================================================================
 // src/utils/api.js
-// All HTTP and WebSocket helpers for Assignment 3
-// WebSocket binary audio channel: /ws/chat
+// All HTTP and WebSocket helpers — matched to new barebones backend
 // =============================================================================
 
-// ---------------------------------------------------------------------------
-// Base URLs — picked up from Vite proxy in dev, relative paths in prod
-// ---------------------------------------------------------------------------
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const WS_BASE  = import.meta.env.VITE_WS_BASE_URL  ||
   (window.location.protocol === 'https:' ? 'wss:' : 'ws:') +
@@ -15,19 +11,8 @@ const WS_BASE  = import.meta.env.VITE_WS_BASE_URL  ||
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-export function generateSessionId() {
-  return crypto.randomUUID()
-}
-
-function sanitize(text) {
-  const el = document.createElement('div')
-  el.textContent = text
-  return el.innerHTML
-}
-
 async function jsonFetch(path, options = {}) {
   const res = await fetch(API_BASE + path, {
-    credentials: 'include',       // send HttpOnly JWT cookie
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
   })
@@ -39,54 +24,49 @@ async function jsonFetch(path, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Auth endpoints
+// Auth
 // ---------------------------------------------------------------------------
 export async function login(username, password) {
   return jsonFetch('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ username: sanitize(username), password }),
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export async function register(username, password, email = '') {
+  return jsonFetch('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, email }),
   })
 }
 
 export async function logout() {
-  return jsonFetch('/auth/logout', { method: 'POST' })
-}
-
-export async function register(username, email, password) {
-  return jsonFetch('/auth/register', {
-    method: 'POST',
-    body: JSON.stringify({ username: sanitize(username), email, password }),
-  })
-}
-
-export async function refreshToken() {
-  return jsonFetch('/auth/refresh', { method: 'POST' })
+  return jsonFetch('/auth/logout', { method: 'POST' }).catch(() => {})
 }
 
 // ---------------------------------------------------------------------------
-// Session endpoints
+// Health
 // ---------------------------------------------------------------------------
 export async function healthCheck() {
   return jsonFetch('/health')
 }
 
-export async function getWelcome(sessionId) {
-  return jsonFetch(`/session/welcome/${sessionId}`)
-}
-
-export async function resetSession(sessionId) {
-  return jsonFetch('/reset', {
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+export async function createSession(userId, title = '') {
+  return jsonFetch('/sessions/create', {
     method: 'POST',
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({ user_id: userId, title }),
   })
 }
 
-export async function getSessions() {
-  return jsonFetch('/sessions')
+export async function getSessions(userId) {
+  return jsonFetch(`/sessions?user_id=${userId}`)
 }
 
-export async function getSession(sessionId) {
-  return jsonFetch(`/sessions/${sessionId}`)
+export async function getSessionHistory(sessionId) {
+  return jsonFetch(`/sessions/${sessionId}/history`)
 }
 
 export async function deleteSession(sessionId) {
@@ -94,21 +74,20 @@ export async function deleteSession(sessionId) {
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket factory — /ws/chat?session_id=<uuid>
-// The backend auto-detects binary (audio) vs text (JSON) frames.
+// WebSocket — /ws/chat?session_id=X
 // ---------------------------------------------------------------------------
-export function createChatWebSocket(sessionId, token) {
-  const params = new URLSearchParams({ session_id: sessionId })
-  if (token) params.set('token', token)
-  return new WebSocket(`${WS_BASE}/ws/chat?${params.toString()}`)
+export function createChatWebSocket(sessionId) {
+  const url = `${WS_BASE}/ws/chat?session_id=${sessionId}`
+  return new WebSocket(url)
 }
 
-// ---------------------------------------------------------------------------
-// Text-fallback: send JSON message through an open WebSocket
-// ---------------------------------------------------------------------------
-export function sendTextFrame(ws, sessionId, message) {
+export function sendTextMessage(ws, sessionId, message, userId) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ session_id: sessionId, message: sanitize(message) }))
+    ws.send(JSON.stringify({
+      session_id: sessionId,
+      message,
+      user_id: userId,
+    }))
     return true
   }
   return false

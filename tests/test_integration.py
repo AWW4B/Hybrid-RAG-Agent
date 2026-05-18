@@ -217,63 +217,6 @@ class TestMemoryLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# CRM tests
-# ---------------------------------------------------------------------------
-class TestCRM:
-
-    @pytest.mark.asyncio
-    async def test_get_profile_returns_none_for_new_user(self, auth_user_id):
-        """A freshly registered user may have an empty CRM profile."""
-        from src.tools.crm import get_profile
-        # upsert_crm_profile was called with {} on register — profile exists but empty
-        profile = await get_profile(auth_user_id)
-        # Either None or an empty dict is acceptable
-        if profile:
-            assert isinstance(profile, dict)
-
-    @pytest.mark.asyncio
-    async def test_update_and_retrieve_profile(self, auth_user_id):
-        from src.tools.crm import update_profile, get_profile
-        await update_profile(auth_user_id, {
-            "name":                "Test User",
-            "preferred_categories": ["phones", "laptops"],
-            "budget_range":        "under 30000 PKR",
-        })
-        profile = await get_profile(auth_user_id)
-        assert profile is not None
-        assert profile["name"] == "Test User"
-        assert "phones" in profile["preferred_categories"]
-        assert profile["budget_range"] == "under 30000 PKR"
-
-    @pytest.mark.asyncio
-    async def test_profile_lists_are_merged_not_overwritten(self, auth_user_id):
-        from src.tools.crm import update_profile, get_profile
-        await update_profile(auth_user_id, {"liked_brands": ["Samsung"]})
-        await update_profile(auth_user_id, {"liked_brands": ["Apple"]})
-        profile = await get_profile(auth_user_id)
-        brands = profile.get("liked_brands", [])
-        assert "Samsung" in brands
-        assert "Apple"   in brands
-
-    @pytest.mark.asyncio
-    async def test_crm_context_block_non_empty_for_known_user(self, auth_user_id):
-        from src.tools.crm import update_profile, get_profile, build_crm_context_block
-        await update_profile(auth_user_id, {
-            "name": "Ali", "budget_range": "under 20000 PKR"
-        })
-        profile = await get_profile(auth_user_id)
-        block = build_crm_context_block(profile)
-        assert "Ali" in block
-        assert "20000" in block
-
-    @pytest.mark.asyncio
-    async def test_crm_context_block_empty_for_missing_profile(self):
-        from src.tools.crm import build_crm_context_block
-        block = build_crm_context_block(None)
-        assert block == ""
-
-
-# ---------------------------------------------------------------------------
 # Database access layer tests
 # ---------------------------------------------------------------------------
 class TestDB:
@@ -289,16 +232,6 @@ class TestDB:
         assert user is not None
         assert user["id"] == uid
         assert user["username"] == uname
-
-    @pytest.mark.asyncio
-    async def test_upsert_crm_profile(self):
-        from src import db
-        uname = f"crmtest_{uuid.uuid4().hex[:6]}"
-        uid   = await db.create_user(uname, f"{uname}@x.com", "hash")
-        await db.upsert_crm_profile(uid, {"name": "DB Test", "budget_range": "5000"})
-        profile = await db.get_crm_profile(uid)
-        assert profile["name"] == "DB Test"
-        assert profile["budget_range"] == "5000"
 
     @pytest.mark.asyncio
     async def test_save_and_load_session_memory(self):

@@ -1,54 +1,96 @@
 import os
-import logging
 import re
+import unicodedata
+import logging
 
 logger = logging.getLogger(__name__)
 
 DOCS_DIR = os.getenv("DOCS_DIR", "/app/dataset")
-# On host (Windows) during dev, it might be different, but in Docker it's /app/dataset
-# For the script to work during development, let's try a relative path if the absolute one fails
 if not os.path.exists(DOCS_DIR):
-    # Try a relative path for local testing
     DOCS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "dataset")
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, strip accents/apostrophes, collapse whitespace."""
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower()
+    text = re.sub(r"['\"`''']", "", text)   # remove apostrophes
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+_STOPWORDS = {
+    "expensive", "cheap", "cheapest", "most", "highest", "lowest",
+    "find", "show", "me", "best", "buy", "want", "to", "the", "a",
+    "an", "and", "or", "for", "in", "of", "on", "with",
+}
+
 
 def search_products(query: str) -> str:
     """
-    Simulates a database search for products matching a query (title, brand, category).
+    Search the local product catalog (flat .txt files) for a query.
+    Returns a formatted list of matching products with prices.
     """
     try:
         if not os.path.exists(DOCS_DIR):
             return "Product catalog is currently offline (directory not found)."
 
-        query_lower = query.lower().strip()
+        norm_query = _normalize(query)
+        find_expensive = any(w in norm_query for w in ("expensive", "high", "top", "premium"))
+        find_cheap = any(w in norm_query for w in ("cheap", "budget", "low", "affordable"))
+
+        # Extract meaningful keywords, drop stopwords and very short tokens
+        keywords = [kw for kw in norm_query.split() if kw not in _STOPWORDS and len(kw) > 2]
+        if not keywords:
+            keywords = norm_query.split()
+
+        files = sorted(f for f in os.listdir(DOCS_DIR) if f.endswith(".txt"))[:500]
         results = []
-        
-        # Limit to checking first 100 files for speed
-        files = [f for f in os.listdir(DOCS_DIR) if f.endswith(".txt")][:100]
-        
+
         for filename in files:
             file_path = os.path.join(DOCS_DIR, filename)
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                # Search across the full file content (title, brand, category, description)
-                if query_lower in content.lower():
-                    # Extract Title and Price
-                    title_match = re.search(r"Title:\s*(.*)", content, re.IGNORECASE)
-                    price_match = re.search(r"Deal Alert:.*?for\s*([\d,]+\s*PKR)", content, re.IGNORECASE)
-                    if not price_match:
-                        price_match = re.search(r"Base Price:\s*(.*)", content, re.IGNORECASE)
-                    
-                    title = title_match.group(1).strip() if title_match else filename
-                    price = price_match.group(1).strip() if price_match else "Price on request"
-                    results.append(f"- {title} ({price})")
-            
-            if len(results) >= 5: # Limit results
-                break
-        
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            except Exception:
+                continue
+
+            norm_content = _normalize(raw)
+
+            # Count how many keywords appear in the normalised content
+            match_count = sum(1 for kw in keywords if kw in norm_content)
+            if match_count < max(1, len(keywords) * 0.6):
+                continue
+
+            title_match = re.search(r"Title:\s*(.*)", raw, re.IGNORECASE)
+            price_match = re.search(r"Deal Alert:.*?for\s*([\d,]+\s*PKR)", raw, re.IGNORECASE)
+            if not price_match:
+                price_match = re.search(r"Base Price:\s*(.*)", raw, re.IGNORECASE)
+
+            title     = title_match.group(1).strip() if title_match else filename
+            price_str = price_match.group(1).strip() if price_match else ""
+
+            price_val = 0
+            if price_str:
+                numeric = re.sub(r"[^\d]", "", price_str)
+                if numeric:
+                    price_val = int(numeric)
+
+            results.append({"title": title, "price_str": price_str or "Price on request", "price_val": price_val})
+
         if not results:
-            return f"I couldn't find any products matching '{query}' in our local catalog."
-            
-        return f"I found {len(results)} matching products:\n" + "\n".join(results)
+            return f"No products found matching '{query}' in the catalog. Try shorter keywords like a brand name."
+
+        if find_expensive:
+            results.sort(key=lambda x: x["price_val"], reverse=True)
+        elif find_cheap:
+            results.sort(key=lambda x: x["price_val"])
+
+        top = results[:8]
+        formatted = [f"- {r['title']} ({r['price_str']})" for r in top]
+        return f"Found {len(results)} product(s) (showing top {len(formatted)}):\n" + "\n".join(formatted)
 
     except Exception as e:
-        logger.error(f"Product search tool error: {e}")
+        logger.error(f"[product_search] Error: {e}")
         return "I'm having trouble searching the catalog right now."

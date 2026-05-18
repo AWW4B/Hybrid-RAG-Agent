@@ -1,446 +1,357 @@
-# =============================================================================
-# backend/src/engine/llm.py
-# Voice-to-Voice orchestration engine.
-#
-# Changes from original:
-#   - Added generate_non_streaming() for internal summarization calls
-#   - process_audio / generate / stream now follow the 7-step turn order:
-#       1. auto_compact_if_needed
-#       2. RAG retrieval (ephemeral — not stored in history)
-#       3. build prompt + stream/generate LLM response
-#       4. append user + assistant messages to history
-#       5. apply_micro_compact (clear consumed tool results)
-#       6. maybe_extract_to_crm (background, non-blocking)
-#   - refresh_crm_block called at session init (once per WebSocket connect)
-# =============================================================================
+"""
+llm.py — The Chat Engine with flawless parallel execution.
+
+Thread A (foreground): Streams Chat LLM tokens to the client.
+Thread B (background): Fires the Brain LLM compaction engine AFTER streaming.
+Both NEVER run simultaneously — coordinated via asyncio.Lock.
+"""
 
 import io
-import json
-import logging
 import os
-import tempfile
-import time
+import logging
 import asyncio
-from typing import Optional, AsyncGenerator
-from concurrent.futures import ThreadPoolExecutor
-
+import tempfile
+import threading
 import wave
-import moonshine_onnx as moonshine
-from piper import PiperVoice
+from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncGenerator, Optional
+
 from llama_cpp import Llama
 
-from src.config import (
-    MAX_TURNS, MAX_TOKENS, N_CTX, N_THREADS, N_BATCH,
-    TEMPERATURE, TOP_P, REPEAT_PENALTY,
-    RAG_MAX_CONTEXT_TOKENS,
+from config import (
+    LLM_MODEL_PATH,
+    LLM_N_CTX,
+    LLM_N_THREADS,
+    LLM_N_GPU_LAYERS,
+    LLM_CHAT_TEMP,
+    LLM_MAX_TOKENS_CHAT,
+    PIPER_MODEL_PATH,
+    WHISPER_MODEL,
 )
-from src.conversation.memory import (
-    build_inference_payload,
-    add_message_to_chat,
-    extract_and_strip_state,
-    increment_turn,
-    is_session_maxed,
-    get_session_status,
-    set_session_status,
-    is_conversation_resolved,
-    get_or_create_session,
-    apply_micro_compact,
-    refresh_crm_block,
-    flush_session_to_db,
-)
-from src.conversation.compaction import (
-    auto_compact_if_needed,
-    maybe_extract_to_crm,
-    estimate_tokens,
-)
-from src.retrieval.search import retriever
-
+from conversation import memory
+from conversation.compaction import run_background_compaction, init_compaction, get_llm_lock
+from tools.orchestrator import run_orchestrator, init_orchestrator
+import db
 
 logger = logging.getLogger(__name__)
 
-# Thread pool for blocking model inference (increased from 1 to 10 for better concurrency)
-_executor = ThreadPoolExecutor(max_workers=10)
+# ── Shared resources ────────────────────────────────────────────────
+_llm: Llama | None = None
+_executor: ThreadPoolExecutor | None = None
 
-# =============================================================================
-# STT MODEL
-# =============================================================================
-_MOONSHINE_MODEL = "moonshine/base"
-logger.info(f"[engine] Moonshine STT model: {_MOONSHINE_MODEL}")
 
-# =============================================================================
-# TTS MODEL
-# =============================================================================
-_piper_model_path = os.getenv("PIPER_MODEL", "/models/en_US-lessac-medium.onnx")
-try:
-    _tts_model = PiperVoice.load(_piper_model_path)
-    logger.info(f"✅ [engine] Piper TTS loaded: {_piper_model_path}")
-except Exception as _e:
-    logger.error(f"❌ [engine] Piper TTS load failed: {_e}")
-    _tts_model = None
+# ════════════════════════════════════════════════════════════════════
+#  STARTUP / SHUTDOWN
+# ════════════════════════════════════════════════════════════════════
 
-# =============================================================================
-# LLM MODEL
-# =============================================================================
-_model_path = os.getenv("MODEL_PATH", "/models/qwen2.5-3b-instruct-q4_k_m.gguf")
-logger.info(f"[engine] Loading LLM model from: {_model_path}")
-try:
+def startup() -> None:
+    """Load the LLM and create the thread pool. Called once at app boot."""
+    global _llm, _executor
+
+    n_threads = LLM_N_THREADS or os.cpu_count() or 4
+    _executor = ThreadPoolExecutor(max_workers=max(4, n_threads))
+
+    logger.info(f"[llm] Loading model: {LLM_MODEL_PATH}")
     _llm = Llama(
-        model_path=_model_path,
-        n_ctx=N_CTX,
-        n_threads=N_THREADS,
-        n_batch=N_BATCH,
-        n_gpu_layers=0,
-        verbose=True,
+        model_path=LLM_MODEL_PATH,
+        n_ctx=LLM_N_CTX,
+        n_threads=n_threads,
+        n_gpu_layers=LLM_N_GPU_LAYERS,
+        verbose=False,
     )
-    logger.info("✅ [engine] LLM model loaded successfully.")
-except Exception as e:
-    logger.error(f"❌ [engine] LLM load failed: {e}")
+    logger.info(f"[llm] Model loaded. Context: {LLM_N_CTX}, Threads: {n_threads}")
+
+    # Wire up subsystems
+    init_compaction(_llm, _executor)
+    init_orchestrator(_executor)
+
+
+def shutdown() -> None:
+    global _llm, _executor
+    if _executor:
+        _executor.shutdown(wait=False)
+        _executor = None
     _llm = None
+    logger.info("[llm] Shutdown complete.")
 
 
-# =============================================================================
-# STAGE 1 — SPEECH-TO-TEXT
-# =============================================================================
+# ════════════════════════════════════════════════════════════════════
+#  VOICE — STT (faster-whisper) + TTS (Piper)
+# ════════════════════════════════════════════════════════════════════
+
+_tts_model = None
+_tts_lock  = threading.Lock()
+_stt_model = None
+_stt_lock  = threading.Lock()
+
+
+def _get_tts():
+    global _tts_model
+    if _tts_model is None:
+        with _tts_lock:
+            if _tts_model is None:
+                from piper import PiperVoice
+                logger.info(f"[voice] Loading Piper TTS: {PIPER_MODEL_PATH}")
+                _tts_model = PiperVoice.load(PIPER_MODEL_PATH)
+                logger.info("[voice] Piper TTS loaded.")
+    return _tts_model
+
+
+def _get_stt():
+    """Lazy-load faster-whisper STT model (CPU, tiny model ~40MB)."""
+    global _stt_model
+    if _stt_model is None:
+        with _stt_lock:
+            if _stt_model is None:
+                from faster_whisper import WhisperModel
+                logger.info(f"[voice] Loading faster-whisper STT model: {WHISPER_MODEL}")
+                _stt_model = WhisperModel(
+                    WHISPER_MODEL,
+                    device="cpu",
+                    compute_type="int8",
+                    download_root="/models/whisper",
+                )
+                logger.info("[voice] faster-whisper STT loaded.")
+    return _stt_model
+
+
 async def transcribe_audio(audio_bytes: bytes, session_id: str) -> str:
-    logger.info(f"[engine] STT called | session={session_id} | {len(audio_bytes)} bytes")
+    """faster-whisper STT: audio bytes → transcript string."""
+    logger.info(f"[voice] STT called | session={session_id[:8]} | {len(audio_bytes)} bytes")
 
-    def _run_stt() -> str:
+    def _run() -> str:
+        import subprocess
+
         suffix = ".wav" if audio_bytes[:4] == b"RIFF" else ".webm"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(audio_bytes)
-            raw_path = tmp.name
-
+        tmp_path = None
         wav_path = None
         try:
-            import subprocess
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_tmp:
-                wav_path = wav_tmp.name
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", raw_path, "-ac", "1", "-ar", "16000", wav_path],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wtmp:
+                wav_path = wtmp.name
+
+            # Convert to 16kHz mono WAV for whisper
+            ret = subprocess.run(
+                ["ffmpeg", "-y", "-i", tmp_path, "-ac", "1", "-ar", "16000",
+                 "-sample_fmt", "s16", wav_path],
+                capture_output=True, text=True,
             )
-            transcripts = moonshine.transcribe(wav_path, _MOONSHINE_MODEL)
-            return " ".join(t.strip() for t in transcripts).strip()
+            if ret.returncode != 0:
+                logger.error(f"[voice] ffmpeg error: {ret.stderr[:300]}")
+                return ""
+
+            model = _get_stt()
+            logger.info(f"[voice] Transcribing {wav_path}...")
+            segments, info = model.transcribe(wav_path, beam_size=1, language="en")
+            transcript = " ".join(seg.text.strip() for seg in segments).strip()
+            logger.info(f"[voice] Transcript: '{transcript}' (lang={info.language}, prob={info.language_probability:.2f})")
+            return transcript
+        except Exception as e:
+            logger.error(f"[voice] STT failed: {e}", exc_info=True)
+            return ""
         finally:
-            for p in (raw_path, wav_path):
+            for p in (tmp_path, wav_path):
                 if p and os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+                    try: os.remove(p)
+                    except OSError: pass
 
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _run_stt)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _run)
 
 
-# =============================================================================
-# STAGE 3 — TEXT-TO-SPEECH
-# =============================================================================
 async def synthesize_speech(text: str, session_id: str) -> bytes:
-    if _tts_model is None:
-        raise RuntimeError("Piper TTS model not loaded.")
+    """Piper TTS: text → WAV audio bytes."""
+    tts = _get_tts()
 
-    def _run_tts() -> bytes:
+    def _run() -> bytes:
         buf = io.BytesIO()
-        with wave.open(buf, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(_tts_model.config.sample_rate)
-            _tts_model.synthesize(text, wav_file)
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(tts.config.sample_rate)
+            tts.synthesize(text, wf)
         return buf.getvalue()
 
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _run_tts)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _run)
 
 
-# =============================================================================
-# INTERNAL LLM HELPERS
-# =============================================================================
-from src.config import build_chatml_prompt
+async def process_audio(session_id: str, audio_bytes: bytes) -> tuple[bytes, str, str]:
+    """Full voice pipeline: audio → STT → LLM → TTS → audio."""
+    # Step 1: Transcribe (no LLM needed)
+    user_text = await transcribe_audio(audio_bytes, session_id)
+    if not user_text.strip():
+        reply = "I didn't catch that — could you try again?"
+        audio_resp = await synthesize_speech(reply, session_id)
+        return audio_resp, "", reply
+
+    logger.info(f"[voice] Generating response for: '{user_text[:80]}'")
+
+    # Step 2: LLM generation (collects all tokens)
+    assistant_text = await generate_response(session_id, user_text)
+    logger.info(f"[voice] LLM response: '{assistant_text[:80]}'")
+
+    # Step 3: TTS (no LLM needed)
+    audio_response = await synthesize_speech(assistant_text, session_id)
+    logger.info(f"[voice] TTS done: {len(audio_response)} bytes")
+
+    return audio_response, user_text, assistant_text
 
 
-def _run_llm_sync(prompt: str, max_tokens: int) -> str:
-    """Blocking call — must run in executor."""
-    if _llm is None:
-        raise RuntimeError("LLM not loaded.")
-    return "".join(
-        chunk["choices"][0]["text"]
-        for chunk in _llm(
-            prompt,
-            max_tokens=max_tokens,
-            stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
-            echo=False,
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            repeat_penalty=REPEAT_PENALTY,
-            stream=True,
-        )
-    )
+# ════════════════════════════════════════════════════════════════════
+#  CHAT STREAMING  (the hot path)
+# ════════════════════════════════════════════════════════════════════
 
-
-async def _llm_generate_non_streaming(messages: list[dict], max_tokens: int = 400) -> str:
+async def stream_chat(
+    session_id: str,
+    user_prompt: str,
+    on_tool_start=None,
+    on_tool_done=None,
+) -> AsyncGenerator[str, None]:
     """
-    Non-streaming LLM call for internal use (summarization, CRM extraction).
-    Never yields tokens to the user.
+    The main entry point for a chat turn.
+
+    1. Append user message to RAM history.
+    2. Run the orchestrator to get tool context (sends tool status to frontend).
+    3. Build the full prompt array.
+    4. STREAM Chat LLM tokens back via async generator (under LLM lock).
+    5. After streaming completes, fire background compaction (also under lock).
     """
-    if _llm is None:
-        raise RuntimeError("LLM not loaded.")
-    prompt = build_chatml_prompt(messages)
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _run_llm_sync, prompt, max_tokens)
+    # Step 1: Record the user message in RAM
+    memory.append_message(session_id, "user", user_prompt)
 
+    # Step 2: Orchestrator — get tool context (runs in thread pool)
+    if on_tool_start:
+        await on_tool_start()
 
-async def _generate_text(session_id: str, user_text: str) -> str:
-    """Stage 2: RAG retrieval + LLM generation (full response, non-streaming)."""
-    if _llm is None:
-        raise RuntimeError("LLM not loaded.")
+    tool_context = await run_orchestrator(user_prompt)
 
-    # RAG — ephemeral, injected into system prompt only (not stored in history)
-    rag_context = retriever.get_relevant_context(user_text)
-    if estimate_tokens([{"content": rag_context}]) > RAG_MAX_CONTEXT_TOKENS:
-        rag_context = rag_context[: RAG_MAX_CONTEXT_TOKENS * 4]
+    if on_tool_done:
+        await on_tool_done(tool_context)
 
-    messages = build_inference_payload(session_id, user_text, rag_context=rag_context)
-    prompt   = build_chatml_prompt(messages)
+    if tool_context:
+        logger.info(f"[llm] Tool context: {len(tool_context)} chars")
 
-    loop = asyncio.get_event_loop()
-    raw_response = await loop.run_in_executor(_executor, _run_llm_sync, prompt, MAX_TOKENS)
-    return extract_and_strip_state(session_id, raw_response)
+    # Step 3: Build prompt messages
+    messages = memory.build_prompt_messages(session_id, tool_context)
 
+    # Log the system prompt for debugging CRM injection
+    system_msg = messages[0]["content"] if messages else ""
+    if "[Customer Profile]" in system_msg:
+        logger.info(f"[llm] CRM injected into system prompt ✓")
+    else:
+        logger.info(f"[llm] No CRM profile in system prompt")
 
-# =============================================================================
-# ORCHESTRATION LAYER
-# =============================================================================
-class VoiceEngine:
+    # Step 4: Stream the Chat LLM (acquire lock to prevent concurrent access)
+    full_response = []
+    loop = asyncio.get_running_loop()
+    llm_lock = get_llm_lock()
 
-    def _check_lifecycle_guards(self, session_id: str) -> Optional[str]:
-        if _llm is None:
-            return "I'm temporarily unavailable. Please try again later."
-        if get_session_status(session_id) == "ended":
-            return "This session has ended. Please start a new chat."
-        if is_session_maxed(session_id):
-            set_session_status(session_id, "ended")
-            farewell = "We've reached the end of our session. Thank you for shopping with Daraz Assistant!"
-            add_message_to_chat(session_id, "assistant", farewell)
-            return farewell
-        return None
+    chunks_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-    async def _post_turn_hooks(self, session_id: str) -> None:
-        """
-        Background memory work — runs AFTER user response is sent.
-        All operations are fire-and-forget; errors are logged, never raised.
-        """
-        loop = asyncio.get_event_loop()
-        # Step 5: Micro-compact (fast, in-memory — still sync but cheap)
-        apply_micro_compact(session_id)
-        # Flush to SQLite in background thread (non-blocking)
-        loop.run_in_executor(_executor, flush_session_to_db, session_id)
-        # Step 6: Background CRM extraction (already fire-and-forget)
-        session = get_or_create_session(session_id)
-        await maybe_extract_to_crm(session, _llm_generate_non_streaming)
+    async with llm_lock:
+        logger.info(f"[llm] LLM lock acquired for streaming ({session_id[:8]})")
 
-    # -------------------------------------------------------------------------
-    # AUDIO PATH (voice chat)
-    # -------------------------------------------------------------------------
-    async def process_audio(self, session_id: str, audio_bytes: bytes) -> tuple[bytes, str, str]:
-        guard_text = self._check_lifecycle_guards(session_id)
-        if guard_text:
-            return await synthesize_speech(guard_text, session_id), "", guard_text
-
-        # Transcribe first — no blocking compaction before STT
-        user_text = await transcribe_audio(audio_bytes, session_id)
-        if not user_text.strip():
-            silence_reply = "I didn't catch that — could you try again?"
-            return await synthesize_speech(silence_reply, session_id), "", silence_reply
-
-        # Generate LLM response
-        assistant_text = await _generate_text(session_id, user_text)
-
-        # Fast Redis-only updates
-        add_message_to_chat(session_id, "user",      user_text)
-        add_message_to_chat(session_id, "assistant", assistant_text)
-        increment_turn(session_id)
-
-        if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
-            set_session_status(session_id, "closing")
-
-        # Synthesize audio and return immediately
-        audio_response = await synthesize_speech(assistant_text, session_id)
-
-        # Schedule all memory work AFTER audio is returned
-        session = get_or_create_session(session_id)
-        asyncio.create_task(self._background_memory_work(session_id, session))
-
-        return audio_response, user_text, assistant_text
-
-    # -------------------------------------------------------------------------
-    # TEXT PATH (REST /chat endpoint)
-    # -------------------------------------------------------------------------
-    async def generate(self, session_id: str, user_message: str) -> dict:
-        guard_text = self._check_lifecycle_guards(session_id)
-        if guard_text:
-            session = get_or_create_session(session_id)
-            return {
-                "response":   guard_text,
-                "latency_ms": 0.0,
-                "session_id": session_id,
-                "status":     session.get("status", "active"),
-                "turns_used": session.get("turns", 0),
-                "turns_max":  MAX_TURNS,
-            }
-
-        start = time.perf_counter()
-
-        # Generate response FIRST — compaction runs in background AFTER
-        assistant_text = await _generate_text(session_id, user_message)
-
-        # Fast in-memory updates (Redis only)
-        add_message_to_chat(session_id, "user",      user_message)
-        add_message_to_chat(session_id, "assistant", assistant_text)
-        increment_turn(session_id)
-
-        if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
-            set_session_status(session_id, "closing")
-
-        session = get_or_create_session(session_id)
-        result = {
-            "response":   assistant_text,
-            "latency_ms": round((time.perf_counter() - start) * 1000, 2),
-            "session_id": session_id,
-            "status":     session["status"],
-            "turns_used": session["turns"],
-            "turns_max":  MAX_TURNS,
-        }
-
-        # Schedule background memory work AFTER response is ready
-        asyncio.create_task(self._background_memory_work(session_id, session))
-
-        return result
-
-    async def _background_memory_work(self, session_id: str, session: dict) -> None:
-        """All memory work after a turn: compaction check, post-hooks. Non-blocking."""
-        try:
-            await auto_compact_if_needed(
-                session, _llm_generate_non_streaming, context_window=N_CTX, session_id=session_id
-            )
-            await self._post_turn_hooks(session_id)
-        except Exception as e:
-            logger.warning(f"[engine] Background memory work failed for {session_id}: {e}")
-
-    # -------------------------------------------------------------------------
-    # STREAMING TEXT PATH (WebSocket)
-    # -------------------------------------------------------------------------
-    async def stream(self, session_id: str, user_message: str) -> AsyncGenerator[dict, None]:
-        guard_text = self._check_lifecycle_guards(session_id)
-        if guard_text:
-            yield {"token": guard_text, "done": True}
-            return
-
-        if _llm is None:
-            yield {"token": "LLM not loaded.", "done": True, "error": "LLM initialization failed."}
-            return
-
-        start = time.perf_counter()
-
-        # RAG (ephemeral) — runs immediately, no compaction blocking
-        rag_context = retriever.get_relevant_context(user_message)
-        if estimate_tokens([{"content": rag_context}]) > RAG_MAX_CONTEXT_TOKENS:
-            rag_context = rag_context[: RAG_MAX_CONTEXT_TOKENS * 4]
-
-        # Build prompt from current session state
-        messages = build_inference_payload(session_id, user_message, rag_context=rag_context)
-        prompt   = build_chatml_prompt(messages)
-
-        loop = asyncio.get_event_loop()
-        token_queue: asyncio.Queue = asyncio.Queue()
-
-        def _worker():
+        def _generate():
+            """Run the blocking LLM generation in a thread, pushing chunks."""
             try:
-                for chunk in _llm(
-                    prompt,
-                    max_tokens=MAX_TOKENS,
-                    stop=["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
-                    echo=False,
-                    temperature=TEMPERATURE,
-                    top_p=TOP_P,
-                    repeat_penalty=REPEAT_PENALTY,
+                for chunk in _llm.create_chat_completion(
+                    messages=messages,
+                    temperature=LLM_CHAT_TEMP,
+                    max_tokens=LLM_MAX_TOKENS_CHAT,
                     stream=True,
                 ):
-                    loop.call_soon_threadsafe(token_queue.put_nowait, chunk)
+                    delta = chunk["choices"][0].get("delta", {})
+                    token = delta.get("content", "")
+                    if token:
+                        loop.call_soon_threadsafe(chunks_queue.put_nowait, token)
+
+                # Signal end of stream
+                loop.call_soon_threadsafe(chunks_queue.put_nowait, None)
             except Exception as e:
-                loop.call_soon_threadsafe(token_queue.put_nowait, e)
-            finally:
-                loop.call_soon_threadsafe(token_queue.put_nowait, None)
+                logger.error(f"[llm] Generation error: {e}", exc_info=True)
+                loop.call_soon_threadsafe(chunks_queue.put_nowait, None)
 
-        loop.run_in_executor(_executor, _worker)
+        # Start generation in thread pool
+        _executor.submit(_generate)
 
-        full_text    = ""
-        yield_buffer = ""
-        hide_remaining = False
-
+        # Yield tokens as they arrive
         while True:
-            item = await token_queue.get()
-            if item is None:
+            token = await chunks_queue.get()
+            if token is None:
                 break
-            if isinstance(item, Exception):
-                yield {"token": "", "done": True, "error": str(item)}
-                return
+            full_response.append(token)
+            yield token
 
-            token = item["choices"][0]["text"]
-            full_text += token
+    # Lock released after streaming completes
+    logger.info(f"[llm] LLM lock released ({session_id[:8]})")
 
-            if hide_remaining:
-                continue
+    # Step 5: Save assistant response to RAM + DB
+    assistant_text = "".join(full_response)
+    if assistant_text:
+        memory.append_message(session_id, "assistant", assistant_text)
 
-            yield_buffer += token
-            if "<STATE>" in yield_buffer:
-                hide_remaining = True
-                valid_text, _ = yield_buffer.split("<STATE>", 1)
-                if valid_text:
-                    yield {"token": valid_text, "done": False}
-                yield_buffer = ""
-                continue
+        # Persist messages to DB (fire-and-forget)
+        asyncio.create_task(_save_messages_to_db(session_id, user_prompt, assistant_text))
 
-            match_len = 0
-            for i in range(1, len("<STATE>") + 1):
-                if yield_buffer.endswith("<STATE>"[:i]):
-                    match_len = i
-
-            if match_len > 0:
-                safe_to_yield = yield_buffer[:-match_len]
-                yield_buffer  = yield_buffer[-match_len:]
-            else:
-                safe_to_yield = yield_buffer
-                yield_buffer  = ""
-
-            if safe_to_yield:
-                yield {"token": safe_to_yield, "done": False}
-
-        if yield_buffer and not hide_remaining:
-            yield {"token": yield_buffer, "done": False}
-
-        # Persist to Redis immediately (fast — user gets done signal)
-        clean_response = extract_and_strip_state(session_id, full_text)
-        add_message_to_chat(session_id, "user",      user_message)
-        add_message_to_chat(session_id, "assistant", clean_response.strip())
-        increment_turn(session_id)
-
-        if get_session_status(session_id) != "ended" and is_conversation_resolved(session_id):
-            set_session_status(session_id, "closing")
-
-        session = get_or_create_session(session_id)
-        yield {
-            "token":      "",
-            "done":       True,
-            "latency_ms": round((time.perf_counter() - start) * 1000, 2),
-            "session_id": session_id,
-            "status":     session["status"],
-            "turns_used": session["turns"],
-            "turns_max":  MAX_TURNS,
-        }
-
-        # Schedule ALL memory work AFTER done signal is sent to user
-        asyncio.create_task(self._background_memory_work(session_id, session))
+    # Step 6: Fire background compaction AFTER streaming (will acquire its own lock)
+    asyncio.create_task(_safe_compaction(session_id))
 
 
-llm_engine = VoiceEngine()
+async def _safe_compaction(session_id: str) -> None:
+    """Wrapper to catch any compaction errors without crashing."""
+    try:
+        await run_background_compaction(session_id)
+    except Exception as e:
+        logger.error(f"[llm] Background compaction error: {e}", exc_info=True)
+
+
+async def _save_messages_to_db(session_id: str, user_msg: str, asst_msg: str) -> None:
+    """Persist the turn to the database asynchronously."""
+    try:
+        await db.save_message(session_id, "user", user_msg)
+        await db.save_message(session_id, "assistant", asst_msg)
+        await db.touch_session(session_id)
+        logger.info(f"[llm] Messages persisted to DB for session {session_id[:8]}")
+    except Exception as e:
+        logger.error(f"[llm] DB save failed: {e}", exc_info=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  NON-STREAMING CHAT  (for /voice endpoint)
+# ════════════════════════════════════════════════════════════════════
+
+async def generate_response(session_id: str, user_prompt: str) -> str:
+    """Non-streaming version — collects full response and returns it."""
+    chunks = []
+    async for token in stream_chat(session_id, user_prompt):
+        chunks.append(token)
+    return "".join(chunks)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  WARMUP
+# ════════════════════════════════════════════════════════════════════
+
+async def warmup() -> str:
+    """Pre-heat the model with a trivial generation to eliminate first-call latency."""
+    if not _llm:
+        return "Model not loaded"
+
+    llm_lock = get_llm_lock()
+    async with llm_lock:
+        loop = asyncio.get_running_loop()
+
+        def _run():
+            _llm.create_chat_completion(
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=1,
+            )
+            return "warm"
+
+        result = await loop.run_in_executor(_executor, _run)
+    logger.info("[llm] Warmup complete.")
+    return result

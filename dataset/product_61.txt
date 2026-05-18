@@ -1,8 +1,8 @@
-Title: Product_61
+Title: Service Advanced Skin Care Serum
 Category: Beauty > Skincare
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_61 by Service is a high-quality item in our Beauty collection.
+Content: The Service Advanced Skin Care Serum by Service is a high-quality item in our Beauty collection.
 Detailed Sentiment: Users rate this 4.3/5 based on 161 reviews.
 Deal Alert: Currently on sale for 51,183 PKR (Save 42%).
 ---

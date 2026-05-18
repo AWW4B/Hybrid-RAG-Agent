@@ -1,8 +1,8 @@
-Title: Product_33
+Title: Outfitters Professional Makeup Kit
 Category: Beauty > Makeup
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_33 by Outfitters is a high-quality item in our Beauty collection.
+Content: The Outfitters Professional Makeup Kit by Outfitters is a high-quality item in our Beauty collection.
 Detailed Sentiment: Users rate this 4.9/5 based on 624 reviews.
 Deal Alert: Currently on sale for 104,307 PKR (Save 37%).
 ---

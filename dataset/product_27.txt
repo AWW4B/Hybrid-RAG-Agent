@@ -1,8 +1,8 @@
-Title: Product_27
+Title: Gul Ahmed Men's Athletic Shoes
 Category: Shoes > Men Shoes
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_27 by Gul Ahmed is a high-quality item in our Shoes collection.
+Content: The Gul Ahmed Men's Athletic Shoes by Gul Ahmed is a high-quality item in our Shoes collection.
 Detailed Sentiment: Users rate this 4.1/5 based on 12 reviews.
 Deal Alert: Currently on sale for 113,766 PKR (Save 41%).
 ---

@@ -1,8 +1,8 @@
-Title: Product_35
+Title: Sapphire Advanced Skin Care Serum
 Category: Beauty > Skincare
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_35 by Sapphire is a high-quality item in our Beauty collection.
+Content: The Sapphire Advanced Skin Care Serum by Sapphire is a high-quality item in our Beauty collection.
 Detailed Sentiment: Users rate this 3.8/5 based on 168 reviews.
 Deal Alert: Currently on sale for 45,754 PKR (Save 43%).
 ---

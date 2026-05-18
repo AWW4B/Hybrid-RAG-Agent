@@ -1,8 +1,8 @@
-Title: Product_4
+Title: Sapphire Women's Fashion Heels
 Category: Shoes > Women Shoes
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_4 by Sapphire is a high-quality item in our Shoes collection.
+Content: The Sapphire Women's Fashion Heels by Sapphire is a high-quality item in our Shoes collection.
 Detailed Sentiment: Users rate this 4.9/5 based on 675 reviews.
 Deal Alert: Currently on sale for 74,957 PKR (Save 40%).
 ---

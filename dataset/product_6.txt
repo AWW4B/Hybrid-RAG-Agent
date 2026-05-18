@@ -1,8 +1,8 @@
-Title: Product_6
+Title: Haier Fully Automatic Washing Machine
 Category: Home Appliances > Washing Machine
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_6 by Haier is a high-quality item in our Home Appliances collection.
+Content: The Haier Fully Automatic Washing Machine by Haier is a high-quality item in our Home Appliances collection.
 Detailed Sentiment: Users rate this 3.5/5 based on 666 reviews.
 Deal Alert: Currently on sale for 144,589 PKR (Save 15%).
 ---

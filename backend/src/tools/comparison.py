@@ -16,7 +16,12 @@ def _get_product_details(query: str) -> dict:
     for filename in files:
         with open(os.path.join(DOCS_DIR, filename), "r", encoding="utf-8") as f:
             content = f.read()
-            if query_lower in content.lower():
+            # Improved Matching: Check if all keywords from query_lower exist in content
+            keywords = [kw for kw in query_lower.split() if len(kw) > 2]
+            if not keywords: keywords = [query_lower]
+            
+            match_count = sum(1 for kw in keywords if kw in content.lower())
+            if match_count >= len(keywords) * 0.7: # 70% keyword match threshold
                 title = re.search(r"Title:\s*(.*)", content, re.IGNORECASE)
                 price = re.search(r"Currently on sale for\s*(.*)", content, re.IGNORECASE)
                 rating = re.search(r"Users rate this\s*(.*?)\s*based", content, re.IGNORECASE)

@@ -1,8 +1,8 @@
-Title: Product_52
+Title: Orient Kids' Premium Apparel
 Category: Fashion > Kids
 Source: Daraz Product Catalog (CSV)
 ---
-Content: The Product_52 by Orient is a high-quality item in our Fashion collection.
+Content: The Orient Kids' Premium Apparel by Orient is a high-quality item in our Fashion collection.
 Detailed Sentiment: Users rate this 4.3/5 based on 95 reviews.
 Deal Alert: Currently on sale for 57,182 PKR (Save 29%).
 ---
